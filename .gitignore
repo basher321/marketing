@@ -1,0 +1,32 @@
+# Secrets: never commit. backend/.env holds the database, JWT, encryption and
+# Zernio keys; frontend/.env.local the local API address.
+.env
+.env.*
+!.env.local.example
+*.pem
+*.key
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+.next-*/
+out/
+*.tsbuildinfo
+
+# Uploaded and generated media (company data, local storage)
+backend/media/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log

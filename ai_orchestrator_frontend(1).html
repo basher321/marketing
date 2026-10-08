@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Orchestrator</title>
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --panel: #ffffff;
+    --border: #e5e7eb;
+    --text: #111827;
+    --muted: #6b7280;
+    --accent: #4f46e5;
+    --accent-soft: #eef2ff;
+    --success: #10b981;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --sidebar-bg: #0f172a;
+    --sidebar-text: #cbd5e1;
+    --sidebar-hover: #1e293b;
+    --sidebar-active: #4f46e5;
+    --chart-1: #4f46e5;
+    --chart-2: #06b6d4;
+    --chart-3: #10b981;
+    --chart-4: #f59e0b;
+    --chart-5: #ef4444;
+    --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b1220;
+      --panel: #111827;
+      --border: #1f2937;
+      --text: #f9fafb;
+      --muted: #9ca3af;
+      --accent-soft: #1e1b4b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b1220;
+    --panel: #111827;
+    --border: #1f2937;
+    --text: #f9fafb;
+    --muted: #9ca3af;
+    --accent-soft: #1e1b4b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .app { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+  .sidebar {
+    background: var(--sidebar-bg);
+    color: var(--sidebar-text);
+    padding: 20px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    color: #fff; font-weight: 700; font-size: 16px;
+    padding: 8px 12px 20px 12px;
+    border-bottom: 1px solid #1e293b;
+    margin-bottom: 12px;
+  }
+  .brand-logo {
+    width: 28px; height: 28px; border-radius: 6px;
+    background: linear-gradient(135deg, #6366f1, #06b6d4);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+  }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 12px; border-radius: 6px; cursor: pointer;
+    color: var(--sidebar-text); font-size: 13.5px;
+    transition: background .15s;
+  }
+  .nav-item:hover { background: var(--sidebar-hover); color: #fff; }
+  .nav-item.active { background: var(--sidebar-active); color: #fff; }
+  .nav-icon { width: 16px; text-align: center; font-size: 14px; }
+  .nav-section {
+    font-size: 11px; text-transform: uppercase; color: #64748b;
+    padding: 14px 12px 6px 12px; letter-spacing: .05em;
+  }
+  .main { display: flex; flex-direction: column; overflow: hidden; }
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 24px; background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  .search {
+    flex: 1; max-width: 420px;
+    padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text);
+  }
+  .topbar-right { display: flex; align-items: center; gap: 12px; }
+  .icon-btn {
+    width: 34px; height: 34px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--panel); cursor: pointer; color: var(--text);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .avatar {
+    width: 34px; height: 34px; border-radius: 50%;
+    background: linear-gradient(135deg, #6366f1, #06b6d4);
+    color: #fff; display: flex; align-items: center; justify-content: center;
+    font-weight: 600; font-size: 12px;
+  }
+  .content { flex: 1; padding: 24px; overflow-y: auto; }
+  .page-title { font-size: 22px; font-weight: 700; margin: 0 0 4px 0; }
+  .page-subtitle { color: var(--muted); margin: 0 0 20px 0; }
+
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .grid-2 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px; box-shadow: var(--shadow);
+  }
+  .card-title { font-size: 13px; color: var(--muted); margin: 0 0 6px 0; text-transform: uppercase; letter-spacing: .04em; }
+  .card-value { font-size: 24px; font-weight: 700; margin: 0; }
+  .card-delta { font-size: 12px; margin-top: 6px; }
+  .up { color: var(--success); }
+  .down { color: var(--danger); }
+
+  .section-title {
+    font-size: 15px; font-weight: 600; margin: 24px 0 12px 0;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .btn {
+    padding: 8px 14px; border-radius: 6px; border: none; cursor: pointer;
+    background: var(--accent); color: #fff; font-weight: 500; font-size: 13px;
+  }
+  .btn-secondary {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+  }
+  .btn-ghost { background: transparent; color: var(--muted); border: none; }
+
+  .engine-card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 20px; box-shadow: var(--shadow);
+  }
+  .engine-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .engine-name { font-size: 16px; font-weight: 600; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); display: inline-block; }
+  .engine-metric { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; }
+  .engine-metric-label { color: var(--muted); }
+
+  .timeline-item {
+    display: flex; gap: 12px; padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .timeline-item:last-child { border-bottom: none; }
+  .timeline-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-top: 8px; flex-shrink: 0; }
+  .timeline-time { font-size: 12px; color: var(--muted); }
+  .timeline-body { font-size: 13px; }
+
+  /* Chat */
+  .chat-container { display: grid; grid-template-columns: 1fr 320px; gap: 16px; height: calc(100vh - 130px); }
+  .chat-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; }
+  .chat-header { padding: 14px 18px; border-bottom: 1px solid var(--border); font-weight: 600; }
+  .chat-messages { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+  .msg { max-width: 75%; padding: 10px 14px; border-radius: 12px; font-size: 13.5px; }
+  .msg.user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+  .msg.ai { align-self: flex-start; background: var(--bg); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+  .plan-card {
+    align-self: flex-start; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px; max-width: 85%; width: 100%;
+  }
+  .plan-title { font-weight: 600; margin-bottom: 8px; }
+  .plan-action {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 0; font-size: 13px; border-bottom: 1px solid var(--border);
+  }
+  .plan-action:last-of-type { border-bottom: none; }
+  .plan-buttons { display: flex; gap: 8px; margin-top: 10px; justify-content: flex-end; }
+  .chat-input {
+    padding: 12px 14px; border-top: 1px solid var(--border);
+    display: flex; gap: 8px; align-items: center;
+  }
+  .chat-input input {
+    flex: 1; padding: 10px 12px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  }
+  .approvals-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; overflow-y: auto; }
+  .approval-item { padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .approval-item:last-child { border-bottom: none; }
+  .approval-title { font-weight: 500; font-size: 13.5px; }
+  .approval-meta { font-size: 12px; color: var(--muted); margin: 4px 0 8px 0; }
+  .approval-buttons { display: flex; gap: 6px; }
+  .btn-sm { padding: 4px 10px; font-size: 12px; border-radius: 5px; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  tr:hover td { background: var(--bg); }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 11px; font-weight: 500;
+  }
+  .badge-success { background: rgba(16,185,129,.12); color: var(--success); }
+  .badge-warn { background: rgba(245,158,11,.12); color: var(--warn); }
+  .badge-danger { background: rgba(239,68,68,.12); color: var(--danger); }
+  .badge-neutral { background: rgba(107,114,128,.12); color: var(--muted); }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+  .tab {
+    padding: 10px 16px; cursor: pointer; font-size: 13.5px;
+    color: var(--muted); border-bottom: 2px solid transparent;
+  }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 500; }
+
+  /* Forms */
+  .form-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+  .form-row label { font-size: 13px; font-weight: 500; }
+  .form-row input, .form-row textarea, .form-row select {
+    padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); font-size: 13.5px; font-family: inherit;
+  }
+  .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+  /* Charts */
+  .chart {
+    width: 100%; height: 240px;
+    display: flex; align-items: flex-end; gap: 6px; padding: 12px 0;
+  }
+  .bar {
+    flex: 1; background: linear-gradient(180deg, var(--chart-1), #818cf8);
+    border-radius: 4px 4px 0 0; position: relative; min-height: 4px;
+  }
+  .chart-legend { display: flex; gap: 16px; margin-top: 12px; font-size: 12px; color: var(--muted); }
+  .legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
+
+  /* Workflow */
+  .workflow-canvas {
+    background: var(--bg); border: 1px dashed var(--border); border-radius: 10px;
+    min-height: 400px; padding: 24px;
+    display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+  }
+  .wf-node {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 16px; min-width: 160px; box-shadow: var(--shadow);
+    position: relative;
+  }
+  .wf-node-type { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 4px; }
+  .wf-node-title { font-size: 13px; font-weight: 500; }
+  .wf-trigger { border-left: 3px solid var(--warn); }
+  .wf-condition { border-left: 3px solid var(--accent); }
+  .wf-action { border-left: 3px solid var(--success); }
+  .wf-arrow { color: var(--muted); font-size: 18px; }
+
+  .kb-list { display: flex; flex-direction: column; gap: 8px; }
+  .kb-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px;
+  }
+  .kb-item-icon {
+    width: 30px; height: 30px; border-radius: 6px; background: var(--accent-soft);
+    display: flex; align-items: center; justify-content: center; color: var(--accent);
+  }
+
+  .integrations-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .integration-card {
+    padding: 14px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--panel);
+  }
+  .integration-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .integration-name { font-weight: 500; font-size: 13.5px; }
+  .integration-status { font-size: 11px; }
+
+  .page { display: none; }
+  .page.active { display: block; }
+
+  @media (max-width: 900px) {
+    .app { grid-template-columns: 1fr; }
+    .sidebar { display: none; }
+    .grid-3, .grid-4, .integrations-grid { grid-template-columns: 1fr; }
+    .grid-2 { grid-template-columns: 1fr; }
+    .chat-container { grid-template-columns: 1fr; height: auto; }
+    .form-grid-2 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo">AI</div>
+      <div>Orchestrator</div>
+    </div>
+    <div class="nav-section">Main</div>
+    <div class="nav-item active" data-page="dashboard"><span class="nav-icon">◉</span> Dashboard</div>
+    <div class="nav-item" data-page="chat"><span class="nav-icon">◈</span> Command Chat</div>
+
+    <div class="nav-section">Engines</div>
+    <div class="nav-item" data-page="ecommerce"><span class="nav-icon">▤</span> E-Commerce</div>
+    <div class="nav-item" data-page="marketing"><span class="nav-icon">◍</span> Marketing</div>
+    <div class="nav-item" data-page="customer"><span class="nav-icon">◐</span> Customer Service</div>
+
+    <div class="nav-section">Configuration</div>
+    <div class="nav-item" data-page="kb"><span class="nav-icon">▦</span> Knowledge Base</div>
+    <div class="nav-item" data-page="campaigns"><span class="nav-icon">◆</span> Campaigns</div>
+    <div class="nav-item" data-page="workflows"><span class="nav-icon">◇</span> Workflows</div>
+    <div class="nav-item" data-page="analytics"><span class="nav-icon">▨</span> Analytics</div>
+    <div class="nav-item" data-page="integrations"><span class="nav-icon">◎</span> Integrations</div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+    <div class="topbar">
+      <input class="search" placeholder="Search products, orders, campaigns...">
+      <div class="topbar-right">
+        <button class="icon-btn" title="Notifications">◔</button>
+        <button class="icon-btn" title="Settings">◈</button>
+        <div class="avatar">RB</div>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- DASHBOARD -->
+      <div id="page-dashboard" class="page active">
+        <h1 class="page-title">Dashboard</h1>
+        <p class="page-subtitle">What's happening across your business, right now.</p>
+
+        <div class="grid-4">
+          <div class="card">
+            <p class="card-title">Revenue (24h)</p>
+            <p class="card-value">৳48,320</p>
+            <p class="card-delta up">▲ 12.4% vs yesterday</p>
+          </div>
+          <div class="card">
+            <p class="card-title">Orders</p>
+            <p class="card-value">147</p>
+            <p class="card-delta up">▲ 8 new since morning</p>
+          </div>
+          <div class="card">
+            <p class="card-title">Ad Spend</p>
+            <p class="card-value">৳12,450</p>
+            <p class="card-delta down">▼ ROAS 3.8x</p>
+          </div>
+          <div class="card">
+            <p class="card-title">Open Conversations</p>
+            <p class="card-value">23</p>
+            <p class="card-delta">▲ 6 awaiting reply</p>
+          </div>
+        </div>
+
+        <h2 class="section-title">Automation Engines</h2>
+        <div class="grid-3">
+          <div class="engine-card">
+            <div class="engine-header">
+              <div class="engine-name">E-Commerce</div>
+              <span><span class="status-dot"></span> Active</span>
+            </div>
+            <div class="engine-metric"><span class="engine-metric-label">Active workflows</span><b>8</b></div>
+            <div class="engine-metric"><span class="engine-metric-label">Orders (24h)</span><b>147</b></div>
+            <div class="engine-metric"><span class="engine-metric-label">Low-stock alerts</span><b>3</b></div>
+            <div class="engine-metric"><span class="engine-metric-label">Pending approvals</span><b>1</b></div>
+          </div>
+          <div class="engine-card">
+            <div class="engine-header">
+              <div class="engine-name">Marketing</div>
+              <span><span class="status-dot"></span> Active</span>
+            </div>
+            <div class="engine-metric"><span class="engine-metric-label">Active campaigns</span><b>4</b></div>
+            <div class="engine-metric"><span class="engine-metric-label">Scheduled posts</span><b>17</b></div>
+            <div class="engine-metric"><span class="engine-metric-label">Avg. ROAS</span><b>3.8x</b></div>
+            <div class="engine-metric"><span class="engine-metric-label">Pending approvals</span><b>2</b></div>
+          </div>
+          <div class="engine-card">
+            <div class="engine-header">
+              <div class="engine-name">Customer Service</div>
+              <span><span class="status-dot"></span> Active</span>
+            </div>
+            <div class="engine-metric"><span class="engine-metric-label">Open threads</span><b>23</b></div>
+            <div class="engine-metric"><span class="engine-metric-label">Avg. response</span><b>2m 14s</b></div>
+            <div class="engine-metric"><span class="engine-metric-label">Deflection rate</span><b>68%</b></div>
+            <div class="engine-metric"><span class="engine-metric-label">CSAT (7d)</span><b>4.6/5</b></div>
+          </div>
+        </div>
+
+        <h2 class="section-title">Recent Activity</h2>
+        <div class="card">
+          <div class="timeline-item">
+            <div class="timeline-dot"></div>
+            <div>
+              <div class="timeline-time">2 min ago</div>
+              <div class="timeline-body">AI drafted reply for <b>3 customer messages</b> — awaiting your approval.</div>
+            </div>
+          </div>
+          <div class="timeline-item">
+            <div class="timeline-dot" style="background: var(--success);"></div>
+            <div>
+              <div class="timeline-time">18 min ago</div>
+              <div class="timeline-body">Ad variant <b>"Summer Sale v3"</b> paused automatically — CTR below threshold.</div>
+            </div>
+          </div>
+          <div class="timeline-item">
+            <div class="timeline-dot" style="background: var(--warn);"></div>
+            <div>
+              <div class="timeline-time">1 hour ago</div>
+              <div class="timeline-body">Low stock alert — <b>Cotton T-Shirt (M/Black)</b> down to 4 units.</div>
+            </div>
+          </div>
+          <div class="timeline-item">
+            <div class="timeline-dot"></div>
+            <div>
+              <div class="timeline-time">3 hours ago</div>
+              <div class="timeline-body">Instagram post published — <b>"Weekend Special: 20% off"</b> — 1.2k reach so far.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CHAT -->
+      <div id="page-chat" class="page">
+        <h1 class="page-title">Command Chat</h1>
+        <p class="page-subtitle">Talk to your business. Direct all three engines in plain language.</p>
+        <div class="chat-container">
+          <div class="chat-panel">
+            <div class="chat-header">Conversation with AI Orchestrator</div>
+            <div class="chat-messages">
+              <div class="msg user">Launch a Ramadan sale on our top 10 SKUs. Run ads for a week on Facebook and Instagram. Budget: 20,000 BDT.</div>
+              <div class="msg ai">Got it. I'll draft a plan across the E-Commerce and Marketing engines. One moment...</div>
+              <div class="plan-card">
+                <div class="plan-title">Proposed Plan · 4 actions</div>
+                <div class="plan-action">
+                  <span>▸ Apply 20% discount to top 10 SKUs by revenue</span>
+                  <span class="badge badge-warn">Needs approval</span>
+                </div>
+                <div class="plan-action">
+                  <span>▸ Generate 3 ad creatives (FB + IG)</span>
+                  <span class="badge badge-warn">Needs approval</span>
+                </div>
+                <div class="plan-action">
+                  <span>▸ Launch ad campaign — ৳2,857/day × 7 days</span>
+                  <span class="badge badge-warn">Needs approval</span>
+                </div>
+                <div class="plan-action">
+                  <span>▸ Schedule 5 organic posts across the week</span>
+                  <span class="badge badge-success">Auto-approved</span>
+                </div>
+                <div class="plan-buttons">
+                  <button class="btn btn-secondary btn-sm">Reject All</button>
+                  <button class="btn btn-secondary btn-sm">Review Each</button>
+                  <button class="btn btn-sm">Approve All</button>
+                </div>
+              </div>
+              <div class="msg user">Approve all. Also make sure the ads pause automatically if ROAS drops below 2x.</div>
+              <div class="msg ai">Done. Campaign is scheduled to go live at 9 AM tomorrow. I've added an auto-pause rule at ROAS &lt; 2x with a 4-hour rolling window. I'll notify you the moment anything crosses that threshold.</div>
+            </div>
+            <div class="chat-input">
+              <input placeholder="Message the orchestrator...">
+              <button class="btn">Send</button>
+            </div>
+          </div>
+          <div class="approvals-panel">
+            <h3 style="margin-top:0;font-size:14px;">Pending Approvals (3)</h3>
+            <div class="approval-item">
+              <div class="approval-title">Approve ad creative "Ramadan v2"</div>
+              <div class="approval-meta">Marketing · 12 min ago</div>
+              <div class="approval-buttons">
+                <button class="btn btn-secondary btn-sm">View</button>
+                <button class="btn btn-sm">Approve</button>
+              </div>
+            </div>
+            <div class="approval-item">
+              <div class="approval-title">Restock request: T-Shirt M/Black × 200</div>
+              <div class="approval-meta">E-Commerce · 1h ago</div>
+              <div class="approval-buttons">
+                <button class="btn btn-secondary btn-sm">View</button>
+                <button class="btn btn-sm">Approve</button>
+              </div>
+            </div>
+            <div class="approval-item">
+              <div class="approval-title">Reply draft to @sarah_dhaka</div>
+              <div class="approval-meta">Customer Service · 2h ago</div>
+              <div class="approval-buttons">
+                <button class="btn btn-secondary btn-sm">View</button>
+                <button class="btn btn-sm">Approve</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- E-COMMERCE -->
+      <div id="page-ecommerce" class="page">
+        <h1 class="page-title">E-Commerce Automation</h1>
+        <p class="page-subtitle">Catalog, orders, inventory, pricing — all in one place.</p>
+        <div class="tabs">
+          <div class="tab active">Products</div>
+          <div class="tab">Orders</div>
+          <div class="tab">Inventory</div>
+          <div class="tab">Pricing Rules</div>
+          <div class="tab">Shipping</div>
+        </div>
+        <div class="card" style="padding:0">
+          <table>
+            <thead>
+              <tr>
+                <th>SKU</th><th>Product</th><th>Price</th><th>Stock</th><th>Channel</th><th>Status</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>TS-001-BM</td><td>Cotton T-Shirt (M/Black)</td><td>৳790</td><td><span class="badge badge-danger">4</span></td><td>FB, IG, Shopify</td><td><span class="badge badge-success">Active</span></td><td>⋮</td></tr>
+              <tr><td>TS-001-LB</td><td>Cotton T-Shirt (L/Blue)</td><td>৳790</td><td>42</td><td>FB, IG, Shopify</td><td><span class="badge badge-success">Active</span></td><td>⋮</td></tr>
+              <tr><td>HD-023-M</td><td>Hoodie (Medium)</td><td>৳1,850</td><td>18</td><td>Shopify</td><td><span class="badge badge-success">Active</span></td><td>⋮</td></tr>
+              <tr><td>CAP-005</td><td>Baseball Cap - Navy</td><td>৳450</td><td>0</td><td>FB, IG</td><td><span class="badge badge-warn">Out of Stock</span></td><td>⋮</td></tr>
+              <tr><td>MUG-011</td><td>Ceramic Mug 350ml</td><td>৳320</td><td>67</td><td>Shopify, IG</td><td><span class="badge badge-success">Active</span></td><td>⋮</td></tr>
+              <tr><td>BG-042</td><td>Canvas Tote Bag</td><td>৳680</td><td>29</td><td>All channels</td><td><span class="badge badge-neutral">Draft</span></td><td>⋮</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- MARKETING -->
+      <div id="page-marketing" class="page">
+        <h1 class="page-title">Marketing Automation</h1>
+        <p class="page-subtitle">Content, scheduling, ads — coordinated across every channel.</p>
+        <div class="grid-4">
+          <div class="card"><p class="card-title">Active Campaigns</p><p class="card-value">4</p></div>
+          <div class="card"><p class="card-title">Scheduled Posts</p><p class="card-value">17</p></div>
+          <div class="card"><p class="card-title">Avg. ROAS</p><p class="card-value">3.8x</p><p class="card-delta up">▲ 0.4 vs last week</p></div>
+          <div class="card"><p class="card-title">CTR (7d)</p><p class="card-value">2.4%</p></div>
+        </div>
+
+        <h2 class="section-title">Active Campaigns <button class="btn">+ New Campaign</button></h2>
+        <div class="card" style="padding:0">
+          <table>
+            <thead><tr><th>Campaign</th><th>Objective</th><th>Channels</th><th>Budget</th><th>ROAS</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td>Ramadan Sale 2026</td><td>Conversions</td><td>FB, IG</td><td>৳20,000 / 7d</td><td><b class="up">4.2x</b></td><td><span class="badge badge-success">Running</span></td></tr>
+              <tr><td>Brand Awareness Q3</td><td>Reach</td><td>TikTok</td><td>৳15,000 / 14d</td><td>—</td><td><span class="badge badge-success">Running</span></td></tr>
+              <tr><td>Retargeting - Cart Abandon</td><td>Conversions</td><td>FB, IG</td><td>৳8,000 / 30d</td><td><b class="up">6.1x</b></td><td><span class="badge badge-success">Running</span></td></tr>
+              <tr><td>New Product Launch</td><td>Traffic</td><td>All</td><td>৳25,000 / 10d</td><td><b class="down">1.8x</b></td><td><span class="badge badge-warn">Optimizing</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 class="section-title">Content Calendar</h2>
+        <div class="card">
+          <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:8px;text-align:center;">
+            <div><b>Mon</b><div style="margin-top:8px;padding:8px;background:var(--accent-soft);border-radius:6px;font-size:12px;">FB Post<br>IG Story</div></div>
+            <div><b>Tue</b><div style="margin-top:8px;padding:8px;background:var(--accent-soft);border-radius:6px;font-size:12px;">IG Reel</div></div>
+            <div><b>Wed</b><div style="margin-top:8px;padding:8px;background:var(--accent-soft);border-radius:6px;font-size:12px;">FB Post<br>TikTok</div></div>
+            <div><b>Thu</b><div style="margin-top:8px;padding:8px;background:var(--bg);border:1px dashed var(--border);border-radius:6px;font-size:12px;color:var(--muted);">Empty</div></div>
+            <div><b>Fri</b><div style="margin-top:8px;padding:8px;background:var(--accent-soft);border-radius:6px;font-size:12px;">Email Blast<br>IG Post</div></div>
+            <div><b>Sat</b><div style="margin-top:8px;padding:8px;background:var(--accent-soft);border-radius:6px;font-size:12px;">FB Post<br>IG Story<br>TikTok</div></div>
+            <div><b>Sun</b><div style="margin-top:8px;padding:8px;background:var(--accent-soft);border-radius:6px;font-size:12px;">Weekly Recap</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CUSTOMER SERVICE -->
+      <div id="page-customer" class="page">
+        <h1 class="page-title">Customer Service</h1>
+        <p class="page-subtitle">Unified inbox — WhatsApp, Messenger, IG DM, email.</p>
+        <div class="grid-2">
+          <div class="card" style="padding:0">
+            <div style="padding:14px 18px;border-bottom:1px solid var(--border);font-weight:600;">Open Conversations (23)</div>
+            <table>
+              <thead><tr><th>Customer</th><th>Channel</th><th>Topic</th><th>Waiting</th><th>Status</th></tr></thead>
+              <tbody>
+                <tr><td>Sarah A.</td><td>IG DM</td><td>Order tracking</td><td>2m</td><td><span class="badge badge-warn">Draft ready</span></td></tr>
+                <tr><td>Rakib H.</td><td>WhatsApp</td><td>Return request</td><td>8m</td><td><span class="badge badge-warn">Draft ready</span></td></tr>
+                <tr><td>Meena K.</td><td>Messenger</td><td>Size question</td><td>15m</td><td><span class="badge badge-success">Auto-replied</span></td></tr>
+                <tr><td>Farhan I.</td><td>Email</td><td>Bulk order inquiry</td><td>1h</td><td><span class="badge badge-danger">Escalated</span></td></tr>
+                <tr><td>Nadia S.</td><td>IG DM</td><td>Product availability</td><td>3m</td><td><span class="badge badge-success">Auto-replied</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card">
+            <h3 style="margin-top:0;font-size:14px;">AI Reply Draft</h3>
+            <p style="color:var(--muted);font-size:13px;">For: <b>Sarah A. · IG DM</b></p>
+            <div style="background:var(--bg);border:1px solid var(--border);padding:12px;border-radius:6px;font-size:13.5px;margin:12px 0;">
+              Hi Sarah! Thanks for reaching out. Your order <b>#2401</b> was shipped this morning via Sundarban Courier — tracking number <b>SND-4429183</b>. Estimated delivery is tomorrow by 6 PM. Let me know if you need anything else! 💜
+            </div>
+            <p style="font-size:12px;color:var(--muted);">Confidence: <b>94%</b> · Grounded in order database + shipping policy</p>
+            <div style="display:flex;gap:8px;margin-top:12px;">
+              <button class="btn btn-secondary btn-sm">Edit</button>
+              <button class="btn btn-secondary btn-sm">Handoff</button>
+              <button class="btn btn-sm">Send Reply</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- KNOWLEDGE BASE -->
+      <div id="page-kb" class="page">
+        <h1 class="page-title">Business Knowledge Base</h1>
+        <p class="page-subtitle">Everything the AI needs to know to speak for your business.</p>
+        <div class="tabs">
+          <div class="tab active">Brand Voice</div>
+          <div class="tab">Products & Pricing</div>
+          <div class="tab">Policies</div>
+          <div class="tab">FAQs</div>
+          <div class="tab">Shipping</div>
+        </div>
+        <div class="grid-2">
+          <div class="card">
+            <h3 style="margin-top:0;">Brand Settings</h3>
+            <div class="form-row">
+              <label>Brand name</label>
+              <input value="Raihan Fashion House">
+            </div>
+            <div class="form-grid-2">
+              <div class="form-row">
+                <label>Tone: Formal ↔ Playful</label>
+                <input type="range" min="0" max="100" value="65">
+              </div>
+              <div class="form-row">
+                <label>Style: Concise ↔ Detailed</label>
+                <input type="range" min="0" max="100" value="40">
+              </div>
+            </div>
+            <div class="form-row">
+              <label>Primary language</label>
+              <select><option>Bangla (default) + English</option><option>English only</option><option>Bangla only</option></select>
+            </div>
+            <div class="form-row">
+              <label>Forbidden terms (comma-separated)</label>
+              <textarea rows="2">cheap, discount code hunter, low quality</textarea>
+            </div>
+            <button class="btn">Save Brand Settings</button>
+          </div>
+          <div class="card">
+            <h3 style="margin-top:0;">FAQs (12)</h3>
+            <div class="kb-list">
+              <div class="kb-item"><div class="kb-item-icon">?</div><div><b>What's your return policy?</b><br><span style="color:var(--muted);font-size:12px;">Applied to: WhatsApp, IG DM, Email</span></div></div>
+              <div class="kb-item"><div class="kb-item-icon">?</div><div><b>Do you ship outside Dhaka?</b><br><span style="color:var(--muted);font-size:12px;">Applied to: All channels</span></div></div>
+              <div class="kb-item"><div class="kb-item-icon">?</div><div><b>How long does delivery take?</b><br><span style="color:var(--muted);font-size:12px;">Applied to: All channels</span></div></div>
+              <div class="kb-item"><div class="kb-item-icon">?</div><div><b>Can I pay cash on delivery?</b><br><span style="color:var(--muted);font-size:12px;">Applied to: All channels</span></div></div>
+            </div>
+            <button class="btn btn-secondary" style="margin-top:12px;">+ Add FAQ</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- CAMPAIGNS -->
+      <div id="page-campaigns" class="page">
+        <h1 class="page-title">Campaign Wizard</h1>
+        <p class="page-subtitle">Step 3 of 6 — Creative</p>
+
+        <div style="display:flex;gap:4px;margin-bottom:24px;">
+          <div style="flex:1;height:4px;background:var(--accent);border-radius:2px;"></div>
+          <div style="flex:1;height:4px;background:var(--accent);border-radius:2px;"></div>
+          <div style="flex:1;height:4px;background:var(--accent);border-radius:2px;"></div>
+          <div style="flex:1;height:4px;background:var(--border);border-radius:2px;"></div>
+          <div style="flex:1;height:4px;background:var(--border);border-radius:2px;"></div>
+          <div style="flex:1;height:4px;background:var(--border);border-radius:2px;"></div>
+        </div>
+
+        <div class="card">
+          <h3 style="margin-top:0;">AI-Generated Creative Variants</h3>
+          <p style="color:var(--muted);">Pick one or edit before continuing. All variants use your brand voice.</p>
+          <div class="grid-3" style="margin-top:16px;">
+            <div style="border:2px solid var(--accent);border-radius:8px;padding:14px;">
+              <div style="height:120px;background:linear-gradient(135deg,#fbbf24,#ef4444);border-radius:6px;margin-bottom:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;">Variant 1</div>
+              <p style="font-weight:500;margin:0 0 4px 0;">"Ramadan Blessings — 20% Off Everything"</p>
+              <p style="font-size:12px;color:var(--muted);margin:0;">Celebrate the holy month with our finest. Free delivery inside Dhaka.</p>
+              <button class="btn btn-sm" style="margin-top:10px;width:100%;">✓ Selected</button>
+            </div>
+            <div style="border:1px solid var(--border);border-radius:8px;padding:14px;">
+              <div style="height:120px;background:linear-gradient(135deg,#10b981,#06b6d4);border-radius:6px;margin-bottom:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;">Variant 2</div>
+              <p style="font-weight:500;margin:0 0 4px 0;">"This Ramadan, Wear Your Best"</p>
+              <p style="font-size:12px;color:var(--muted);margin:0;">Top 10 SKUs. 20% off for 7 days only.</p>
+              <button class="btn btn-secondary btn-sm" style="margin-top:10px;width:100%;">Select</button>
+            </div>
+            <div style="border:1px solid var(--border);border-radius:8px;padding:14px;">
+              <div style="height:120px;background:linear-gradient(135deg,#6366f1,#ec4899);border-radius:6px;margin-bottom:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;">Variant 3</div>
+              <p style="font-weight:500;margin:0 0 4px 0;">"Iftar-Ready Looks — Limited Time"</p>
+              <p style="font-size:12px;color:var(--muted);margin:0;">Shop the collection. Free returns.</p>
+              <button class="btn btn-secondary btn-sm" style="margin-top:10px;width:100%;">Select</button>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-top:24px;">
+            <button class="btn btn-secondary">← Back</button>
+            <button class="btn">Continue to Budget →</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- WORKFLOWS -->
+      <div id="page-workflows" class="page">
+        <h1 class="page-title">Workflow Builder</h1>
+        <p class="page-subtitle">Compose triggers, conditions, and actions visually.</p>
+        <div style="display:flex;gap:8px;margin-bottom:16px;">
+          <button class="btn">+ New Workflow</button>
+          <button class="btn btn-secondary">Test Run</button>
+          <button class="btn btn-secondary">Version History</button>
+        </div>
+        <div class="workflow-canvas">
+          <div class="wf-node wf-trigger">
+            <div class="wf-node-type">Trigger</div>
+            <div class="wf-node-title">Inventory Low</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:6px;">SKU stock &lt; 10</div>
+          </div>
+          <div class="wf-arrow">→</div>
+          <div class="wf-node wf-condition">
+            <div class="wf-node-type">Condition</div>
+            <div class="wf-node-title">Is best-seller?</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:6px;">Sold 20+ in last 30d</div>
+          </div>
+          <div class="wf-arrow">→</div>
+          <div class="wf-node wf-action">
+            <div class="wf-node-type">Action</div>
+            <div class="wf-node-title">Notify Owner</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:6px;">Via chat + push</div>
+          </div>
+          <div class="wf-arrow">→</div>
+          <div class="wf-node wf-action">
+            <div class="wf-node-type">Action</div>
+            <div class="wf-node-title">Draft Restock PO</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:6px;">Suggested qty: 200</div>
+          </div>
+        </div>
+
+        <h2 class="section-title">Saved Workflows</h2>
+        <div class="card" style="padding:0">
+          <table>
+            <thead><tr><th>Name</th><th>Trigger</th><th>Actions</th><th>Runs (7d)</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td>Low Stock → Restock Alert</td><td>inventory.low</td><td>3</td><td>12</td><td><span class="badge badge-success">Enabled</span></td></tr>
+              <tr><td>Abandoned Cart → Email + Ad</td><td>order.abandoned_cart</td><td>2</td><td>47</td><td><span class="badge badge-success">Enabled</span></td></tr>
+              <tr><td>New Product → Auto-post</td><td>product.created</td><td>4</td><td>6</td><td><span class="badge badge-success">Enabled</span></td></tr>
+              <tr><td>Bad ROAS → Pause + Notify</td><td>ad.threshold_crossed</td><td>2</td><td>3</td><td><span class="badge badge-success">Enabled</span></td></tr>
+              <tr><td>New Message → Auto-reply</td><td>message.received</td><td>1</td><td>184</td><td><span class="badge badge-warn">Paused</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ANALYTICS -->
+      <div id="page-analytics" class="page">
+        <h1 class="page-title">Analytics</h1>
+        <p class="page-subtitle">Real-time performance across sales, ads, engagement, and service.</p>
+        <div class="tabs">
+          <div class="tab active">Sales</div>
+          <div class="tab">Ads</div>
+          <div class="tab">Engagement</div>
+          <div class="tab">Customer Service</div>
+        </div>
+
+        <div class="grid-4">
+          <div class="card"><p class="card-title">Revenue (7d)</p><p class="card-value">৳312,480</p><p class="card-delta up">▲ 18.2%</p></div>
+          <div class="card"><p class="card-title">Orders (7d)</p><p class="card-value">982</p><p class="card-delta up">▲ 14.7%</p></div>
+          <div class="card"><p class="card-title">AOV</p><p class="card-value">৳318</p><p class="card-delta up">▲ ৳12</p></div>
+          <div class="card"><p class="card-title">Refund Rate</p><p class="card-value">2.4%</p><p class="card-delta down">▼ 0.3%</p></div>
+        </div>
+
+        <h2 class="section-title">Revenue by Day <button class="btn btn-ghost">Explain this ⓘ</button></h2>
+        <div class="card">
+          <div class="chart">
+            <div class="bar" style="height:45%"></div>
+            <div class="bar" style="height:60%;background:linear-gradient(180deg,var(--chart-2),#67e8f9);"></div>
+            <div class="bar" style="height:52%"></div>
+            <div class="bar" style="height:75%"></div>
+            <div class="bar" style="height:68%;background:linear-gradient(180deg,var(--chart-2),#67e8f9);"></div>
+            <div class="bar" style="height:88%"></div>
+            <div class="bar" style="height:95%;background:linear-gradient(180deg,var(--chart-3),#6ee7b7);"></div>
+          </div>
+          <div class="chart-legend">
+            <span><span class="legend-dot" style="background:var(--chart-1)"></span>Sun</span>
+            <span><span class="legend-dot" style="background:var(--chart-2)"></span>Mon</span>
+            <span><span class="legend-dot" style="background:var(--chart-1)"></span>Tue</span>
+            <span><span class="legend-dot" style="background:var(--chart-1)"></span>Wed</span>
+            <span><span class="legend-dot" style="background:var(--chart-2)"></span>Thu</span>
+            <span><span class="legend-dot" style="background:var(--chart-1)"></span>Fri</span>
+            <span><span class="legend-dot" style="background:var(--chart-3)"></span>Sat (today)</span>
+          </div>
+        </div>
+
+        <h2 class="section-title">Top Products</h2>
+        <div class="card" style="padding:0">
+          <table>
+            <thead><tr><th>Product</th><th>Units Sold</th><th>Revenue</th><th>Trend</th></tr></thead>
+            <tbody>
+              <tr><td>Cotton T-Shirt (Black)</td><td>187</td><td>৳147,730</td><td class="up">▲ 24%</td></tr>
+              <tr><td>Hoodie (Medium)</td><td>63</td><td>৳116,550</td><td class="up">▲ 9%</td></tr>
+              <tr><td>Canvas Tote Bag</td><td>92</td><td>৳62,560</td><td class="up">▲ 41%</td></tr>
+              <tr><td>Ceramic Mug 350ml</td><td>128</td><td>৳40,960</td><td class="down">▼ 6%</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- INTEGRATIONS -->
+      <div id="page-integrations" class="page">
+        <h1 class="page-title">Integrations</h1>
+        <p class="page-subtitle">Connect the platforms your business runs on.</p>
+        <div class="integrations-grid">
+          <div class="integration-card">
+            <div class="integration-header">
+              <div class="integration-name">Facebook</div>
+              <span class="badge badge-success">Connected</span>
+            </div>
+            <p style="font-size:12px;color:var(--muted);margin:0 0 10px 0;">Last synced: 2 min ago</p>
+            <button class="btn btn-secondary btn-sm">Manage</button>
+          </div>
+          <div class="integration-card">
+            <div class="integration-header">
+              <div class="integration-name">Instagram</div>
+              <span class="badge badge-success">Connected</span>
+            </div>
+            <p style="font-size:12px;color:var(--muted);margin:0 0 10px 0;">Last synced: 2 min ago</p>
+            <button class="btn btn-secondary btn-sm">Manage</button>
+          </div>
+          <div class="integration-card">
+            <div class="integration-header">
+              <div class="integration-name">TikTok Business</div>
+              <span class="badge badge-success">Connected</span>
+            </div>
+            <p style="font-size:12px;color:var(--muted);margin:0 0 10px 0;">Last synced: 5 min ago</p>
+            <button class="btn btn-secondary btn-sm">Manage</button>
+          </div>
+          <div class="integration-card">
+            <div class="integration-header">
+              <div class="integration-name">Meta Ads Manager</div>
+              <span class="badge badge-success">Connected</span>
+            </div>
+            <p style="font-size:12px;color:var(--muted);margin:0 0 10px 0;">Last synced: 1 min ago</p>
+            <button class="btn btn-secondary btn-sm">Manage</button>
+          </div>
+          <div class="integration-card">
+            <div class="integration-header">
+              <div class="integration-name">TikTok Ads</div>
+              <span class="badge badge-warn">Reconnect</span>
+            </div>
+            <p style="font-size:12px;color:var(--muted);margin:0 0 10px 0;">Token expired</p>
+            <button class="btn btn-sm">Reconnect</button>
+          </div>
+          <div class="integration-card">
+            <div class="integration-header">
+              <div class="integration-name">Google Ads</div>
+              <span class="badge badge-neutral">Not Connected</span>
+            </div>
+            <p style="font-size:12px;color:var(--muted);margin:0 0 10px 0;">Add search & display campaigns</p>
+            <button class="btn btn-sm">Connect</button>
+          </div>
+          <div class="integration-card">
+            <div class="integration-header">
+              <div class="integration-name">Shopify</div>
+              <span class="badge badge-success">Connected</span>
+            </div>
+            <p style="font-size:12px;color:var(--muted);margin:0 0 10px 0;">2,431 products synced</p>
+            <button class="btn btn-secondary btn-sm">Manage</button>
+          </div>
+          <div class="integration-card">
+            <div class="integration-header">
+              <div class="integration-name">WhatsApp Business</div>
+              <span class="badge badge-success">Connected</span>
+            </div>
+            <p style="font-size:12px;color:var(--muted);margin:0 0 10px 0;">Tier 2 · 10k msgs/day</p>
+            <button class="btn btn-secondary btn-sm">Manage</button>
+          </div>
+          <div class="integration-card">
+            <div class="integration-header">
+              <div class="integration-name">HubSpot CRM</div>
+              <span class="badge badge-neutral">Not Connected</span>
+            </div>
+            <p style="font-size:12px;color:var(--muted);margin:0 0 10px 0;">Sync customer records</p>
+            <button class="btn btn-sm">Connect</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<script>
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.addEventListener('click', () => {
+      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      item.classList.add('active');
+      const pageId = 'page-' + item.dataset.page;
+      const page = document.getElementById(pageId);
+      if (page) page.classList.add('active');
+    });
+  });
+
+  document.querySelectorAll('.tabs').forEach(tabGroup => {
+    tabGroup.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        tabGroup.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+      });
+    });
+  });
+</script>
+</body>
+</html>

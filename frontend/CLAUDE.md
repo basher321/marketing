@@ -1,0 +1,185 @@
+# CLAUDE.md (frontend)
+
+Guidance for work inside `frontend/`. The repo-root `CLAUDE.md` covers the
+backend; its old "Frontend (React/Vite/Zustand)" sections describe an earlier
+plan and do not apply — this file is authoritative for the frontend.
+
+## What this is
+
+The AI Orchestrator dashboard: **Next.js 15 (App Router) + React 19 +
+TypeScript (strict)**, Tailwind CSS 3, TanStack Query/Table, recharts, Radix
+primitives. It talks to the FastAPI backend in `../backend`. The static mockup
+`../ai_orchestrator_frontend(1).html` is the visual source of truth — every
+label, glyph, and CSS value is copied from it, never retyped from memory.
+
+```bash
+npm install
+npm run dev        # http://localhost:3000 (backend CORS_ORIGINS allows :3000 and :5173)
+npm run build
+npx tsc --noEmit   # strict type check
+```
+
+`NEXT_PUBLIC_API_BASE_URL` (see `.env.local.example`) is required for any API
+call; `apiFetch` throws immediately if it is unset. There is no fallback host.
+
+## Working rule: real app, verified end to end
+
+The frontend is a real application, not a copy of the HTML. A frontend spec is
+done only when its screen loads real data from the running backend, which
+reads/writes the real Postgres DB, and that round trip was verified (backend +
+frontend running together; DB checked inside a rolled-back transaction). Never
+fake data or stub a call to make a screen "work"; if the backend endpoint is
+missing or broken, stop and report it.
+
+## Folder conventions
+
+- **Page routes:** `app/(app)/<page>/page.tsx`. The `(app)` route group adds no
+  URL segment; `app/(app)/layout.tsx` wraps every page in the shell (sidebar +
+  topbar). `app/page.tsx` only redirects `/` to `/dashboard`. Routes outside the
+  group (including 404) render without the shell.
+- **Shell:** `components/shell/` (`sidebar.tsx`, `topbar.tsx`).
+- **Shared UI primitives:** `components/ui/`.
+- **Domain components:** `components/<domain>/`, one folder per nav page,
+  created only when a spec needs it.
+- **API client functions:** `lib/api/<domain>.ts`, one file per backend domain,
+  all calling `apiFetch` from `lib/api/client.ts` (never `fetch` directly).
+- **Shared TypeScript types:** `lib/types/<domain>.ts`, mirroring the backend
+  Pydantic schemas field for field. `ApiError` lives in `lib/types/common.ts`.
+- **TanStack Query hooks:** `hooks/use-<domain>.ts`.
+- **Auth tokens:** `lib/auth/token.ts` stores the access and refresh tokens in
+  localStorage (SPEC-FE-004, SPEC-FE-024). `apiFetch` silently refreshes once on a
+  401 (one shared in-flight refresh) and retries. The route guard and the 401 → `/login` handler live in
+  `app/(app)/providers.tsx`; `/login` is `app/login/page.tsx`, outside the shell.
+
+## Per-spec file discipline
+
+Every SPEC-FE-XXX touching an existing page targets exactly that page's
+`page.tsx` plus at most 3 new/existing files across `components/<domain>/`,
+`lib/api/<domain>.ts`, `lib/types/<domain>.ts`, and `hooks/use-<domain>.ts` —
+mirroring the backend's 4-files-per-spec discipline. No new dependency unless a
+spec justifies it.
+
+## Styling
+
+- Colors come only from the SPEC-FE-001 CSS variables / Tailwind tokens
+  (`bg`, `panel`, `border`, `text`, `muted`, `accent`, `accent-soft`,
+  `success`, `warn`, `danger`, `sidebar-*`, `chart-1..5`) — no new hex values.
+  Dark mode works through the `data-theme` / `prefers-color-scheme` variable
+  overrides. Where the mockup hardcodes a non-token color, use the Tailwind
+  default color with the exact same value (e.g. `white`, `slate-500`,
+  `indigo-500`).
+- `app/globals.css` holds: the three variable blocks + body rule
+  (SPEC-FE-001), then `@tailwind base`, then mockup component classes copied
+  verbatim (.card, .btn, .engine-*, .timeline-*, .chat-*, .msg, .approval-*,
+  ...), then `@tailwind components/utilities`. Component classes go AFTER
+  `@tailwind base` so Tailwind's preflight (e.g. `[type='submit']
+  { background-color: transparent }`) cannot override them. Check a class
+  isn't already ported before adding it.
+- Tailwind scans `app/**` and `components/**`.
+- Undefined interactions in the mockup (topbar icons, search, "⋮" menus,
+  "View") render as static, non-functional elements with a comment, never a
+  fabricated modal/menu.
+
+## Current state
+
+- SPEC-FE-001: scaffold + tokens. SPEC-FE-002: shell. SPEC-FE-003: `apiFetch`,
+  `ApiError`, QueryClient provider (`app/(app)/providers.tsx`).
+- **All 10 pages are built** and verified in a real browser against the live
+  backend with the `dev-shop` demo data (2026-09-29):
+  Dashboard (FE-005/006/007), Command Chat (FE-008/009/010), E-Commerce
+  (FE-011), Marketing (FE-012 + campaigns table/calendar via SPEC-BE-038),
+  Customer Service (FE-013/014), Knowledge Base (FE-015), Campaign Wizard
+  (FE-016), Workflows (FE-017/018), Analytics (FE-019/020), Integrations (FE-021).
+- Shared cache keys: a metric used on several pages uses its owning module's
+  key (e.g. `conversationKeys.list`, `analyticsKeys.orderMetrics`,
+  `marketingKeys.*`, `workflowKeys.list`); approvals share `approvalKeys`
+  (+ the `approvalKeys.decisions` map in `components/chat/decisions.ts`).
+- AI-dependent features (chat plans, creative generation) need a real
+  `LLM_PROVIDER`/`LLM_API_KEY` in `backend/.env`; with the default mock they
+  show the backend's own "unavailable"/"No LLM provider" message. Since
+  SPEC-FE-041 every AI message carries `kind`/`plan_id`, so plan cards (live
+  step status, approve/edit/retry, workflow preview) also render after a reload.
+- Orchestrator v2 screens (2026-10-01), **built and `next build`-clean, but
+  end-to-end verification against the DB is pending**:
+  - `/marketing/paid` (was `/campaigns`; SPEC-FE-049 moved it and
+    `next.config.mjs` redirects the old URLs): the list plus the Ads
+    Manager-style builder at `/marketing/paid/new` and
+    `/marketing/paid/[id]/edit` (`components/campaigns/builder/*`, stepper and
+    Review step in `components/campaigns/review-step.tsx`). A legacy wizard
+    draft still opens at `/marketing/paid?draft=`.
+  - `/integrations`: "Connect with Facebook" and the
+    `/integrations/meta/callback` picker.
+  - Shipping tab: status bar and guided setup wizard.
+  - Analytics and Marketing: real Meta CTR/ROAS, or "—".
+  - Deep links: `/workflows?open=<id>`, `/ecommerce?tab=shipping`.
+- E-Commerce Orders / Inventory / Pricing Rules / Shipping tabs (SPEC-FE-026
+  to 029, 2026-09-30) have no mockup content; their layouts follow common
+  e-commerce admin practice (Shopify/WooCommerce), as the user chose. Inventory
+  Adjust, pricing rule create/toggle, and shipping zone/rate create/toggle show to
+  every role (no current-user role on the client); the backend enforces manager+
+  and a 403 shows a plain-language message. Verified E2E on dev-shop, with test
+  writes reverted.
+- Campaign Wizard (SPEC-FE-030/031, 2026-09-30) is the full 6-step flow in
+  `components/campaigns/wizard.tsx`, with step 3 in `creative-variants.tsx`.
+  The draft id lives in `?draft=`, so the page wraps the wizard in `<Suspense>`
+  for `useSearchParams`. Every Continue PATCHes the draft. Step 4 autosaves so
+  the daily amount and approval note are the backend's own numbers. Creative
+  step: "Write your own" and Edit work without an LLM; "Generate with AI" shows
+  a setup notice on 503. Marketing › Active Campaigns has Pause/Resume
+  (SPEC-FE-032). Launch publishes nothing to ad platforms, and the Review step
+  says so.
+- Analytics Ads / Engagement / Customer Service tabs (SPEC-FE-035, 2026-10-01)
+  share a 7/30/90-day selector; the shared `Tile`/`BarChart` live in
+  `components/analytics/ads-report.tsx`. Metrics without source data (CTR,
+  ROAS, likes, reach…) show "—" with the backend's reason, never an estimate.
+  KB tabs (FE-033), Workflow New/Version History (FE-034) and Integrations
+  (FE-037) are built too, per their specs. Inert by design:
+  topbar search/icons, "⋮", "View", "Explain this".
+- SPEC-FE-004: login page, client-side route guard, avatar logout, 401 →
+  `/login`. SPEC-FE-024: silent token refresh, so users stay signed in (7-day
+  refresh token). SPEC-FE-025 (inside `specs/SPEC-BE-040.md`, no own file):
+  `/forgot-password`, `/reset-password?token=…`,
+  and the show/hide eye (`components/auth/password-input.tsx`) on every password
+  field. All verified in a real browser.
+- Money (SPEC-FE-048): always `formatMoney(amount, currency)` from `lib/format/money.ts`
+  (the currency's own symbol and decimals: "৳1,850", "$12.50", "¥1,500"); never a literal
+  "৳". When a response has no currency, use `useCompanyCurrency()` (`hooks/use-tenant.ts`).
+  Settings → Company lists every country/currency/language/timezone from
+  `GET /tenants/locale-options`.
+- `.env.local` must exist (copy of `.env.local.example`); without it every
+  `apiFetch` call throws before any request is sent.
+- Marketing restructure (SPEC-FE-049/050, 2026-10-03; **`tsc` and `next build`
+  are clean, but E2E against the live DB is still pending**):
+  - **Sidebar:** Marketing is a collapsible group with Paid Marketing and
+    Organic Marketing (open groups remembered in `localStorage`, guarded).
+  - **Organic Marketing:** pages are under `app/(app)/marketing/organic/`
+    (dashboard, create, content/[id], photo, video, calendar, history,
+    accounts, analytics). Components are in `components/organic/`: the
+    `OrganicHeader` tab bar, `errorText`, timezone helpers, media picker,
+    platform preview, content editor, generation studio. APIs are
+    `lib/api/{organic,media,generation,social}.ts`.
+  - **Media** is shown through the backend's signed URLs (`<img>`/`<video
+    src>`; no bearer header needed).
+  - **Roles:** as elsewhere, buttons show to every role and a 403 shows
+    "Your role can't do this…".
+  - **AI Models** has a video model picker (OpenAI/Gemini) and a "Videos"
+    creative kind.
+- SPEC-FE-051/052 (2026-10-03; **`tsc` and `next build` are clean; E2E against the live DB is pending**):
+  - **Paid Marketing tabs** (`?tab=`): Campaigns, Ad Sets, Ads, Drafts, Analytics (`AdsReport`), AI runs. The Ad Sets/Ads tables live in `components/campaigns/paid-lists.tsx` (`lib/api/paid.ts`), with `?campaign=` / `?ad_set=` scoping.
+  - **Social sign-in:** "Connect with Facebook/TikTok/LinkedIn" on Organic › Accounts sends the browser to the backend's `login_url`. The platform returns to `/marketing/organic/accounts/callback/[flow]`, which posts the code to the backend. Tokens never reach the browser.
+  - **"What's working"** card (`components/organic/insights-card.tsx`) on the Organic dashboard and Organic Analytics.
+- SocialAPI.ai (SPEC-FE-054, 2026-10-07; **`tsc` and `next build` are clean; browser E2E pending**):
+  - **Organic › SocialAPI** (`/marketing/organic/socialapi`, last tab): key card, accounts + Connect, composer (media library picker, Pinterest board), posts list, and account analytics. Code is in `components/socialapi/publishing.tsx`.
+  - **Other entry points:** the same key card is on Integrations (under AI Models), and the sidebar has Marketing › SocialAPI.
+  - **Sign-in return:** `/marketing/organic/socialapi/callback` (handles the Page/location picker).
+  - **Customer Service › SocialAPI inbox** (`/customer/socialapi`, linked from the Customer Service header): Messages / Comments / Reviews with "Draft with AI". Code is in `components/socialapi/inbox.tsx`.
+  - **APIs:** `lib/api/socialapi.ts`, `lib/types/socialapi.ts`.
+  - **Separation:** this is separate from the direct connections and from the Customer Service inbox, both unchanged.
+  - **Production builds:** while the dev server runs, build with `NEXT_BUILD_DIR` so its `.next` is left alone.
+- Zernio paid ads (SPEC-FE-055, 2026-10-08; **`tsc` and `next build` are clean; browser E2E pending**):
+  - **Entry points:** Ad Manager has a third mode tab, "Zernio (all platforms)", which opens `/marketing/paid/zernio/new`. Paid Marketing has a "Zernio" tab (`?tab=zernio`).
+  - **Wizard** (`components/zernio/wizard.tsx`): Platform → Account → Goal → Budget & schedule → Audience → Ad → Review, or "Boost an existing post".
+    - Every option comes from `GET /zernio/platforms`.
+    - Connect opens a new tab, which reports back on the `zernio-accounts` BroadcastChannel and closes itself.
+  - **Zernio tab** (`components/zernio/campaigns.tsx`): campaign → ad sets → ads, with pause/resume at each level, Edit, Delete and Results. Results has the daily chart and, on Meta, breakdowns.
+  - **APIs:** `lib/api/zernio.ts`, `lib/types/zernio.ts`. The sign-in return page is `/marketing/paid/zernio/callback`.

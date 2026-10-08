@@ -1,0 +1,69 @@
+# ============================================================================
+# AI Orchestrator Backend - Python Dependencies (Python 3.12)
+# One pin per package (SPEC-BE-071, 2026-10-02): the previous file pinned
+# several packages twice with different versions and `pip install -r` failed
+# (ResolutionImpossible). Versions are the ones installed and verified.
+# Security upgrades: python-jose 3.5.0, fastapi 0.142.2 (starlette 1.7.0),
+# cryptography 50.0.2, python-multipart 0.0.32 (multipart DoS fixes); dev tools
+# pytest 9.0.3 + pytest-asyncio 1.4.0, black 26.3.1. Removed as unused: celery,
+# redis, pyjwt. Known and accepted: ecdsa (python-jose dependency, no fix
+# released) - the app signs HS256 only, so the ECDSA timing issue is unreachable.
+# ============================================================================
+
+# ---- Web framework ----
+fastapi==0.142.2
+uvicorn[standard]==0.34.0
+python-multipart==0.0.32
+
+# ---- Database (PostgreSQL) ----
+sqlalchemy[asyncio]==2.0.36
+psycopg2-binary==2.9.10
+asyncpg==0.30.0
+alembic==1.14.0
+
+# ---- Validation & settings ----
+pydantic==2.10.4
+pydantic-settings==2.7.1
+email-validator==2.2.0
+
+# ---- Authentication & security ----
+passlib[bcrypt]==1.7.4
+bcrypt==4.2.1
+python-jose[cryptography]==3.5.0
+cryptography==50.0.2
+pyotp==2.9.0
+
+# ---- Background jobs (in-process) ----
+apscheduler==3.11.0
+
+# ---- HTTP client (integrations, ad platforms, AI providers) ----
+httpx==0.28.1
+
+# ---- Rate limiting ----
+slowapi==0.1.9
+
+# ---- Logging ----
+structlog==24.4.0
+
+# ---- Time zones & worldwide locale data (SPEC-BE-072) ----
+python-dateutil==2.9.0.post0
+pytz==2024.2
+# IANA zone database for zoneinfo; required on Windows, which has none built in.
+tzdata==2026.4
+# CLDR countries, currencies (names, symbols, decimals) and languages.
+babel==2.18.0
+
+# ---- Images (SPEC-BE-074): crop/pad media to each platform's ratio ----
+pillow==12.0.0
+
+# ---- Testing ----
+pytest==9.0.3
+pytest-asyncio==1.4.0
+pytest-cov==6.0.0
+faker==33.1.0
+
+# ---- Code quality / security scanners ----
+ruff==0.8.4
+black==26.3.1
+mypy==1.13.0
+bandit==1.8.0
