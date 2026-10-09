@@ -223,6 +223,33 @@ class PublishMetaParams(BaseModel):
     mode: Literal["active", "paused"] = "active"
 
 
+class ZernioCampaignParams(BaseModel):
+    """SPEC-BE-090: one Facebook/Instagram campaign → ad set → ad created on
+    Zernio (SPEC-BE-084), whose approved Meta app publishes it. The goals are
+    the Zernio Meta goals that need no extra ids (lead forms, app installs and
+    Page goals stay in the Zernio form)."""
+
+    model_config = _STRICT
+    platform: Literal["facebook", "instagram"] = "facebook"
+    ad_account_id: Annotated[str, StringConstraints(pattern=r"^act_\w{1,40}$")]
+    name: Text
+    goal: Literal["awareness", "traffic", "engagement", "video_views", "conversions"]
+    budget: Annotated[Decimal, Field(gt=0, max_digits=12, decimal_places=2)]
+    budget_type: Literal["daily", "lifetime"] = "daily"
+    duration_days: Annotated[int, Field(ge=1, le=365)]
+    start_date: dt.date | None = None
+    countries: Annotated[list[Country], Field(min_length=1, max_length=25)]
+    age_min: Annotated[int, Field(ge=18, le=65)] = 18
+    age_max: Annotated[int, Field(ge=18, le=65)] = 65
+    genders: Literal["all", "male", "female"] = "all"
+    destination_url: Annotated[str, StringConstraints(pattern=r"^https://\S+$", max_length=2000)]
+    primary_text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+    headline: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+    call_to_action: Annotated[str, StringConstraints(pattern=r"^[A-Z_]{2,40}$")] = "LEARN_MORE"
+    media_id: IdRef
+    mode: Literal["active", "paused"] = "paused"
+
+
 class MetaStatusParams(BaseModel):
     model_config = _STRICT
     level: Literal["campaign", "ad_set", "ad"] = "campaign"
@@ -409,9 +436,11 @@ class ExecContext:
     tenant_id: str
     actor_user_id: str
     actor_role: str
+    # Plan id + step index (SPEC-BE-090): Zernio's Idempotency-Key, so a retried step never makes a second campaign.
+    request_id: str | None = None
 
 
-Executor = Callable[[ExecContext, Any], dict[str, Any]]
+Executor =Callable[[ExecContext, Any], dict[str, Any]]
 
 
 @dataclass
@@ -720,6 +749,45 @@ def _publish_meta(ctx: ExecContext, p: PublishMetaParams) -> dict[str, Any]:
     }
 
 
+def _publish_zernio(ctx: ExecContext, p: ZernioCampaignParams) -> dict[str, Any]:
+    """SPEC-BE-090: the same zernio_service.create_campaign call as the Zernio form,
+    so every Zernio rule (ownership, usable ad account, copy limits) applies."""
+    from app.schemas import zernio as zs
+    from app.services import zernio_service
+
+    listing = zernio_service.platforms(ctx.db, ctx.tenant_id)
+    if not listing["configured"]:
+        raise AppError("Zernio isn't set up on this server.", 503)
+    info = next(x for x in listing["platforms"] if x["key"] == p.platform)
+    account = next((a for a in info["ads_accounts"] if not a["needs_reconnection"]), None)
+    if account is None:
+        raise AppError(f"Connect a {info['label']} ads account in the Zernio tab first.", 409)
+    # The run starts at the start of start_date in the company timezone (now when
+    # omitted or already begun) and ends duration_days later.
+    now = dt.datetime.now(dt.timezone.utc)
+    day_start = _tenant_day_start(ctx, p.start_date)
+    start = day_start if day_start and day_start > now else None
+    end = (start or now) + dt.timedelta(days=p.duration_days)
+    try:
+        payload = zs.CampaignCreate(
+            platform=p.platform, account_id=account["id"], ad_account_id=p.ad_account_id, name=p.name, goal=p.goal,
+            budget=zs.Budget(amount=p.budget, type=p.budget_type), start_at=start, end_at=end,
+            targeting=zs.Targeting(countries=p.countries, age_min=p.age_min, age_max=p.age_max, gender=p.genders),
+            creative=zs.Creative(headline=p.headline, body=p.primary_text, call_to_action=p.call_to_action,
+                                 link_url=p.destination_url, media_id=p.media_id),
+            status="ACTIVE" if p.mode == "active" else "PAUSED", request_id=ctx.request_id,
+        )
+    except ValidationError as exc:
+        raise AppError("; ".join(str(e["msg"]).removeprefix("Value error, ") for e in exc.errors()), 422) from None
+    out = zernio_service.create_campaign(ctx.db, ctx.tenant_id, ctx.actor_user_id, payload)
+    state = "active (it runs once Meta approves it)" if p.mode == "active" else "paused"
+    return {
+        "summary": f"Campaign “{p.name}” created on {info['label']} through Zernio, {state}.",
+        "zernio_campaign_id": out["campaign_id"],
+        "link": "/marketing/paid?tab=zernio",
+    }
+
+
 def _launch_campaign(ctx: ExecContext, p: CampaignRefParams) -> dict[str, Any]:
     from app.services import campaign_service
 
@@ -917,29 +985,76 @@ def _wait_for_job(ctx: ExecContext, job: dict[str, Any]) -> dict[str, Any]:
     return done
 
 
-def _generation_request(ctx: ExecContext, p: GeneratePhotoParams | GenerateVideoParams) -> dict[str, Any]:
+# Command Chat media chains (SPEC-BE-093, amending SPEC-BE-092): Google
+# first, OpenAI on any failure. Images: Nano Banana (Gemini image), then
+# OpenAI images. Videos: Google Flow (= Veo 3.1 through the Gemini API; Flow
+# itself has no API), then an OpenAI slideshow (OpenAI shut down Sora on
+# 2026-09-24). The chain is pinned in the job request, so retries keep it;
+# the models are the company's own choices in AI Models.
+CHAT_CHAINS = {"image": ["gemini_image", "openai_image"], "video": ["gemini_video", "openai_slideshow"]}
+CHAT_PROVIDER_NAMES = {"gemini_image": "Nano Banana", "openai_image": "OpenAI images",
+                       "gemini_video": "Google Flow (Veo)", "openai_slideshow": "OpenAI images as a slideshow"}
+CHAT_NOT_READY = {
+    "image": "No image provider is set up: add a Google Gemini key with a Nano Banana image model "
+             "(e.g. gemini-2.5-flash-image), or an OpenAI key with an image model, in Integrations › AI Models.",
+    "video": "No video provider is set up: add a Google Gemini key with a Veo video model "
+             "(e.g. veo-3.1-generate-preview), or an OpenAI key with an image model (for a slideshow video), "
+             "in Integrations › AI Models.",
+}
+
+
+def _chat_generator_ready(ctx: ExecContext, kind: str) -> None:
+    from app.ai import creative_providers as cp
+
+    if not any(cp.provider(k).available(ctx.db, ctx.tenant_id) for k in CHAT_CHAINS[kind]):
+        raise AppError(CHAT_NOT_READY[kind], 409)
+
+
+def _generation_request(ctx: ExecContext, p: GeneratePhotoParams | GenerateVideoParams, kind: str) -> dict[str, Any]:
+    _chat_generator_ready(ctx, kind)
     req = p.model_dump(exclude_none=True, exclude={"product_skus", "reference_media_id"})
     req["product_ids"] = _sku_ids(ctx, p.product_skus)
     if p.reference_media_id:
         req["reference_media_ids"] = [p.reference_media_id]
+    req["providers"] = list(CHAT_CHAINS[kind])
     return req
+
+
+def _fallback_note(job: dict[str, Any]) -> str:
+    """'Nano Banana failed (HTTP 429 …), so OpenAI images made it.' when an
+    earlier provider of the chain failed."""
+    used = job.get("provider")
+    failed = [a for a in job.get("attempts") or [] if a.get("provider") != used and a.get("outcome") not in ("started", "succeeded")]
+    if not failed:
+        return ""
+    why = "; ".join(f"{CHAT_PROVIDER_NAMES.get(a['provider'], a['provider'])} failed ({str(a.get('outcome'))[:90]})" for a in failed)
+    return f"{why}, so {CHAT_PROVIDER_NAMES.get(str(used), used)} made it."
+
+
+def _generated(job: dict[str, Any], kind: str, summary: str, link: str) -> dict[str, Any]:
+    return {"summary": summary, "media_id": job["media"]["id"], "media_kind": kind, "generation_id": job["id"],
+            "provider": CHAT_PROVIDER_NAMES.get(str(job.get("provider")), job.get("provider")), "model": job.get("model"), "link": link}
 
 
 def _generate_photo(ctx: ExecContext, p: GeneratePhotoParams) -> dict[str, Any]:
     from app.services import generation_service
 
-    job = _wait_for_job(ctx, generation_service.start(ctx.db, ctx.tenant_id, ctx.actor_user_id, "image", _generation_request(ctx, p), run=False))
-    return {"summary": "Photo generated (preview it in Organic › Photo Generation).", "media_id": job["media"]["id"], "generation_id": job["id"],
-            "link": "/marketing/organic/photo"}
+    job = _wait_for_job(ctx, generation_service.start(ctx.db, ctx.tenant_id, ctx.actor_user_id, "image",
+                                                      _generation_request(ctx, p, "image"), run=False))
+    who = CHAT_PROVIDER_NAMES.get(str(job.get("provider")), job.get("provider"))
+    summary = f"Image made with {who}, model {job.get('model')}. {_fallback_note(job)} {' '.join(job['notes'])}"
+    return _generated(job, "image", " ".join(summary.split()), "/marketing/organic/photo")
 
 
 def _generate_video(ctx: ExecContext, p: GenerateVideoParams) -> dict[str, Any]:
     from app.services import generation_service
 
-    job = _wait_for_job(ctx, generation_service.start(ctx.db, ctx.tenant_id, ctx.actor_user_id, "video", _generation_request(ctx, p), run=False))
-    notes = " ".join(job["notes"])
-    return {"summary": f"Video generated ({job['effective'].get('duration_s')} s, {job['effective'].get('aspect_ratio')}). {notes}".strip(),
-            "media_id": job["media"]["id"], "generation_id": job["id"], "link": "/marketing/organic/video"}
+    job = _wait_for_job(ctx, generation_service.start(ctx.db, ctx.tenant_id, ctx.actor_user_id, "video",
+                                                      _generation_request(ctx, p, "video"), run=False))
+    who = CHAT_PROVIDER_NAMES.get(str(job.get("provider")), job.get("provider"))
+    summary = (f"Video made with {who}, model {job.get('model')}: {job['effective'].get('duration_s')} s, "
+               f"{job['effective'].get('aspect_ratio')}. {_fallback_note(job)} {' '.join(job['notes'])}")
+    return _generated(job, "video", " ".join(summary.split()), "/marketing/organic/video")
 
 
 def _create_organic_posts(ctx: ExecContext, p: CreateOrganicPostsParams) -> dict[str, Any]:
@@ -1117,9 +1232,9 @@ for _a in (
     CommandAction("create_organic_post", "Draft an organic post", "organic", "draft", CreateOrganicPostParams, _create_organic_post,
                   "One organic post: a given caption, or AI copy from brief; media_id from the media library or $n.media_id. Returns content_id."),
     CommandAction("generate_photo", "Generate a photo", "organic", "draft", GeneratePhotoParams, _generate_photo,
-                  "AI photo for organic posts (waits for it). Returns media_id."),
+                  "Make an image/photo/picture: Nano Banana (Google) first, OpenAI images if it fails; for posts or ads (waits for it). Returns media_id."),
     CommandAction("generate_video", "Generate a video", "organic", "draft", GenerateVideoParams, _generate_video,
-                  "AI video clip (waits for it; the provider's nearest supported length). Returns media_id."),
+                  "Make a video clip: Google Flow (Veo 3.1, 4/6/8 s) first, an OpenAI image slideshow (4-30 s) if it fails; 16:9 or 9:16 (waits for it). Returns media_id."),
     CommandAction("regenerate_organic_copy", "Rewrite post text", "organic", "draft", RegenerateOrganicCopyParams, _regenerate_organic_copy,
                   "New caption/hashtags/cta/title for a post; the image/video is never changed. content_id from recent_organic."),
     CommandAction("schedule_organic_posts", "Schedule organic posts", "organic", "change", ScheduleOrganicParams, _schedule_organic,
@@ -1137,6 +1252,8 @@ for _a in (
     CommandAction("pause_meta", "Pause on Meta", "meta", "change", MetaStatusParams, _meta_status(False), "Pause a campaign, ad set or ad."),
     CommandAction("resume_meta", "Resume on Meta", "meta", "spend", MetaStatusParams, _meta_status(True), "Resume a campaign, ad set or ad."),
     CommandAction("update_meta_budget", "Change Meta budget", "meta", "spend", MetaBudgetParams, _meta_budget, "New daily or lifetime budget on a published campaign."),
+    CommandAction("publish_zernio_campaign", "Publish ad campaign through Zernio", "marketing", "spend", ZernioCampaignParams, _publish_zernio,
+                  "Facebook/Instagram campaign → ad set → ad created on Zernio. ad_account_id from zernio_ads.ad_accounts; media_id from recent_media or $n.media_id; mode paused unless the user asks to run/publish/launch."),
     CommandAction("launch_campaign", "Launch campaign", "marketing", "spend", CampaignRefParams, _launch_campaign, "Launch an existing wizard draft (non-Meta channels).", aliases=("launch_ad",)),
     CommandAction("adjust_budget", "Adjust ad budget", "marketing", "spend", NoParams, None, "", unavailable_reason="Use update_meta_budget for Meta campaigns."),
     # Workflows
@@ -1184,6 +1301,7 @@ FIELD_QUESTIONS: dict[str, str] = {
     "duration_days": "How many days should it run?",
     "countries": "Which countries should the ads target (for example BD)?",
     "destination_url": "Which https web page should the ad link to?",
+    "landing_url": "Which https web page should the ads send people to?",
     "objective": "What's the goal: awareness, traffic, engagement, leads, app promotion or sales?",
     "name": "What should I call it?",
     "skus": "Which products (SKUs) does this cover?",
@@ -1217,6 +1335,10 @@ FIELD_QUESTIONS: dict[str, str] = {
     "prompt": "Describe what you'd like me to generate.",
     "caption": "What should the post say (or what should it be about)?",
     "date": "Which day should it move to?",
+    # Zernio ad campaigns (SPEC-BE-090)
+    "ad_account_id": "Which ad account should the ads run on?",
+    "media_id": "Which image or video should the ad use? I can generate one: say what it should show.",
+    "goal": "What's the goal: awareness, traffic, engagement, video views or sales?",
 }
 GENERIC_FIELD_QUESTION = "What should “{field}” be for “{action}”?"
 
@@ -1254,7 +1376,11 @@ class Missing:
 @dataclass
 class Dropped:
     index: int
-    reason: Literal["unknown_action_type", "not_available", "forbidden_for_role", "invalid_action", "bad_reference"]
+    reason: Literal[
+        "unknown_action_type", "not_available", "forbidden_for_role", "invalid_action", "bad_reference",
+        # SPEC-BE-085: a step the user didn't ask for, and steps that need it.
+        "not_requested", "depends_on_dropped",
+    ]
     detail: str = ""
 
 
@@ -1293,15 +1419,23 @@ def _cost(action: CommandAction, params: BaseModel) -> int | None:
 
 
 def validate_actions(
-    ctx: ExecContext, raw_actions: list[Any], extra_checks: Callable[[ExecContext, DraftAction, BaseModel], list[tuple[str, str]]] | None = None
+    ctx: ExecContext,
+    raw_actions: list[Any],
+    extra_checks: Callable[[ExecContext, DraftAction, BaseModel], list[tuple[str, str]]] | None = None,
+    pre_dropped: dict[int, Dropped] | None = None,
 ) -> tuple[list[DraftAction], list[Missing], list[Dropped]]:
     """Validates raw {type, params, description, depends_on} items. Role-gated,
     unavailable and unknown actions are dropped; schema failures become Missing
-    entries (one question per field)."""
+    entries (one question per field). `pre_dropped` (position -> Dropped) are
+    steps the caller already left out (SPEC-BE-085 scope check); a step that
+    depends on or references any dropped step is dropped too."""
     kept: list[DraftAction] = []
     missing: list[Missing] = []
     dropped: list[Dropped] = []
     for position, item in enumerate(raw_actions, start=1):
+        if pre_dropped and position in pre_dropped:
+            dropped.append(pre_dropped[position])
+            continue
         if not isinstance(item, dict) or not isinstance(item.get("type"), str):
             dropped.append(Dropped(position, "invalid_action"))
             continue
@@ -1322,6 +1456,9 @@ def validate_actions(
             dropped.append(Dropped(position, "bad_reference", action.label))
             continue
         depends = sorted({*depends, *(n for n, _ in refs)} - {position})
+        if {d.index for d in dropped} & set(depends):
+            dropped.append(Dropped(position, "depends_on_dropped", action.label))
+            continue
         try:
             params = action.params.model_validate(raw_params)
         except ValidationError as exc:
@@ -1349,6 +1486,26 @@ def validate_actions(
                 missing.append(Missing(position, path, question))
         kept.append(draft)
     return kept, missing, dropped
+
+
+def structural_problems(raw_actions: Any) -> list[str]:
+    """Problems worth one more planner call (SPEC-BE-085 FR8): malformed steps,
+    unknown action types and references to later steps. Missing values are not
+    here: those are asked from the user."""
+    if not isinstance(raw_actions, list):
+        return ["\"actions\" must be a list."]
+    problems: list[str] = []
+    for position, item in enumerate(raw_actions, start=1):
+        if not isinstance(item, dict) or not isinstance(item.get("type"), str):
+            problems.append(f"Step {position} is not an object with a \"type\".")
+            continue
+        if resolve(item["type"]) is None:
+            problems.append(f"Step {position}: “{item['type']}” is not an allowed action type.")
+            continue
+        params = item.get("params") if isinstance(item.get("params"), dict) else {}
+        if any(n >= position or n < 1 for n, _ in _refs(params)):
+            problems.append(f"Step {position} refers to a step that isn't before it.")
+    return problems
 
 
 def registry_prompt() -> str:

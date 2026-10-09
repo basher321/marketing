@@ -15,6 +15,8 @@ export interface ResultItem {
   summary: string | null;
   link: string | null;
   data: Record<string, unknown>[] | null;
+  /** A generated image/video (SPEC-BE-092 / SPEC-FE-057); its URL comes from GET /media/{id}. */
+  media: { id: string; kind: "image" | "video" } | null;
 }
 
 export interface ChatMessage {

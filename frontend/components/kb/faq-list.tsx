@@ -5,7 +5,7 @@ import { useState, type FormEvent } from "react";
 
 import { channelLabel } from "@/components/customer/conversations-table";
 import { createFaq, deleteFaq, fetchFaqs, kbKeys, updateFaq } from "@/lib/api/kb";
-import { ApiError } from "@/lib/types/common";
+import { ApiError, isRoleDenied } from "@/lib/types/common";
 import type { FAQItem, FAQList } from "@/lib/types/kb";
 
 // Live channel_type values, offered as the FAQ's "Applied to" choices.
@@ -21,7 +21,7 @@ function appliedTo(channels: string[]): string {
 /** A readable message: 403 in plain words; FastAPI 422 field errors joined; else the backend's text. */
 export function kbErrorText(err: Error): string {
   if (err instanceof ApiError) {
-    if (err.status === 403) return FORBIDDEN;
+    if (isRoleDenied(err)) return FORBIDDEN;
     const detail = (err.body as { detail?: unknown } | undefined)?.detail;
     if (Array.isArray(detail)) {
       return detail

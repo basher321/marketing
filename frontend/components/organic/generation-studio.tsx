@@ -2,7 +2,6 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import {
@@ -17,6 +16,7 @@ import {
   isRunning,
   regenerateJob,
 } from "@/lib/api/generation";
+import { useCreatedItemTab } from "@/hooks/use-new-tab";
 import { fetchProducts, productKeys } from "@/lib/api/products";
 import type { GenerationJob, GenerationKind } from "@/lib/types/generation";
 import { PLATFORM_LABEL, PLATFORMS, type SocialPlatform } from "@/lib/types/social";
@@ -39,7 +39,6 @@ function Elapsed({ since }: { since: string }) {
 
 function JobCard({ job, kind }: { job: GenerationJob; kind: GenerationKind }) {
   const queryClient = useQueryClient();
-  const router = useRouter();
   const [prompt, setPrompt] = useState(String(job.request.prompt ?? ""));
   const [editing, setEditing] = useState<"" | "prompt" | "image" | "post">("");
   const [instruction, setInstruction] = useState("");
@@ -49,13 +48,15 @@ function JobCard({ job, kind }: { job: GenerationJob; kind: GenerationKind }) {
   const regen = useMutation({ mutationFn: (changes: Record<string, unknown>) => regenerateJob(job.id, changes), onSuccess: () => { setEditing(""); done(); } });
   const edit = useMutation({ mutationFn: () => editJob(job.id, instruction), onSuccess: () => { setEditing(""); done(); } });
   const cancel = useMutation({ mutationFn: () => cancelJob(job.id), onSuccess: done });
+  const newTab = useCreatedItemTab();
   const approve = useMutation({
     mutationFn: (withPost: boolean) =>
       approveJob(job.id, withPost ? { create_content: { caption: caption || null, targets: platforms.map((platform) => ({ platform })), adapt: "rules" } } : {}),
     onSuccess: (j) => {
       done();
-      if (j.content_id) router.push(`/marketing/organic/content/${j.content_id}`);
+      if (j.content_id) newTab.open(`/marketing/organic/content/${j.content_id}`); // SPEC-FE-058
     },
+    onError: () => newTab.cancel(),
   });
   const err = regen.error ?? edit.error ?? cancel.error ?? approve.error;
   return (
@@ -162,7 +163,7 @@ function JobCard({ job, kind }: { job: GenerationJob; kind: GenerationKind }) {
             ))}
           </div>
           <textarea rows={2} className="w-full" value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="Caption (leave empty and AI writes it from the prompt)" aria-label="Caption" />
-          <button type="button" className="btn btn-sm mt-1" disabled={platforms.length === 0 || approve.isPending} onClick={() => approve.mutate(true)}>
+          <button type="button" className="btn btn-sm mt-1" disabled={platforms.length === 0 || approve.isPending} onClick={() => { newTab.begin(); approve.mutate(true); }}>
             {approve.isPending ? "Creating…" : "Approve & open the post editor"}
           </button>
         </div>

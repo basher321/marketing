@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Suspense, useState, type FormEvent } from "react";
 
+import { useCreatedItemTab } from "@/hooks/use-new-tab";
 import { errorText } from "@/components/campaigns/builder/tree";
 import { adsKeys, createPlatformCampaign, fetchPlatforms } from "@/lib/api/ads";
 import { createBuilderCampaign, fetchObjectives, metaKeys } from "@/lib/api/meta";
@@ -34,13 +35,18 @@ function MetaNewCampaign() {
   const objectives = useQuery({ queryKey: metaKeys.objectives, queryFn: fetchObjectives });
   const [objective, setObjective] = useState<BuilderObjective | null>(null);
   const [name, setName] = useState("");
+  const newTab = useCreatedItemTab();
   const create = useMutation({
     mutationFn: () => createBuilderCampaign(name.trim(), objective as BuilderObjective),
-    onSuccess: (tree) => router.replace(`/marketing/paid/${tree.campaign.id}/edit`),
+    onSuccess: (tree) => newTab.open(`/marketing/paid/${tree.campaign.id}/edit`), // SPEC-FE-058
+    onError: () => newTab.cancel(),
   });
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (objective && name.trim()) create.mutate();
+    if (objective && name.trim()) {
+      newTab.begin();
+      create.mutate();
+    }
   };
   return (
     <form onSubmit={submit} className="mx-auto max-w-[760px]">
@@ -119,10 +125,12 @@ function PlatformNewCampaign({ platform }: { platform: string }) {
   const [name, setName] = useState("");
   const p = platforms.data?.platforms.find((x) => x.key === platform);
   const needsType = (p?.campaign_types.length ?? 0) > 0;
+  const newTab = useCreatedItemTab();
   const create = useMutation({
     mutationFn: () =>
       createPlatformCampaign(platform as BuilderPlatform, { name: name.trim(), objective: objective as string, campaign_type: needsType ? campaignType : null }),
-    onSuccess: (tree) => router.replace(`/marketing/paid/${tree.campaign.id}/edit`),
+    onSuccess: (tree) => newTab.open(`/marketing/paid/${tree.campaign.id}/edit`), // SPEC-FE-058
+    onError: () => newTab.cancel(),
   });
   if (platforms.isPending) return <p className="text-[13px] text-muted">Loading…</p>;
   if (platforms.isError) return <p className="text-[13px] text-danger">{platforms.error.message}</p>;
@@ -139,7 +147,10 @@ function PlatformNewCampaign({ platform }: { platform: string }) {
   const ready = Boolean(objective && name.trim() && (!needsType || campaignType));
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (ready) create.mutate();
+    if (ready) {
+      newTab.begin();
+      create.mutate();
+    }
   };
   return (
     <form onSubmit={submit} className="mx-auto max-w-[760px]">

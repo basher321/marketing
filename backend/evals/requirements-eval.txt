@@ -1,0 +1,9 @@
+# Evaluation-only environment (SPEC-BE-086): never install into backend/.venv.
+#   python -m venv backend/.venv-eval
+#   backend/.venv-eval/Scripts/pip install -r backend/evals/requirements-eval.txt
+# The app's own pins come first and win; ragas pulls langchain/openai/datasets.
+-r ../requirements.txt
+ragas==0.4.3
+truststore==0.10.4
+# Claude as the RAGAS judge (the app itself calls Claude over plain httpx).
+anthropic==1.12.1

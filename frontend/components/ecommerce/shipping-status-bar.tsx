@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { detectShipping, fetchShippingStatus, shippingKeys, syncShipping } from "@/lib/api/shipping";
-import { ApiError } from "@/lib/types/common";
+import { isRoleDenied } from "@/lib/types/common";
 import type { DetectResult, PreviewMethod } from "@/lib/types/shipping";
 
 const STORE = { shopify: "Shopify", woocommerce: "WooCommerce" } as Record<string, string>;
@@ -21,7 +21,7 @@ function when(iso: string | null): string {
 }
 
 function errText(err: Error): string {
-  if (err instanceof ApiError && err.status === 403) return "Only managers and above can sync shipping.";
+  if (isRoleDenied(err)) return "Only managers and above can sync shipping.";
   return err.message;
 }
 

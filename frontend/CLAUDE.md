@@ -183,3 +183,15 @@ spec justifies it.
     - Connect opens a new tab, which reports back on the `zernio-accounts` BroadcastChannel and closes itself.
   - **Zernio tab** (`components/zernio/campaigns.tsx`): campaign → ad sets → ads, with pause/resume at each level, Edit, Delete and Results. Results has the daily chart and, on Meta, breakdowns.
   - **APIs:** `lib/api/zernio.ts`, `lib/types/zernio.ts`. The sign-in return page is `/marketing/paid/zernio/callback`.
+- New tabs (SPEC-FE-058, 2026-10-09): one new tab per new thing.
+  - **Entry buttons** ("+ New campaign", "Create post", "Create with AI") are `target="_blank"` links to
+    `newTabHref(path)`.
+  - **After a create,** call `useCreatedItemTab()` (`hooks/use-new-tab.ts`): `begin()` in the click
+    handler, `open(path)` in onSuccess, `cancel()` in onError. The editor opens in a new tab, or replaces
+    the form when this tab was itself opened for the new thing (`nt=1`, a per-tab `sessionStorage` mark
+    set in `providers.tsx`).
+  - **Command Chat** "Open" links use `target="_blank"`. In-page "+ Add/New" forms stay inline.
+- 403 messages (SPEC-FE-059, 2026-10-09): use `isRoleDenied(err)` (`lib/types/common.ts`), never
+  `status === 403`, before showing a "your role can't…" message. Only the backend's role check
+  ("Insufficient permissions…") is a role problem. Other 403s (SocialAPI/Zernio refusals, "Only the owner
+  can …", an expired media link) show the backend's own text.

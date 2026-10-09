@@ -12,7 +12,7 @@ import {
   shippingKeys,
   updateShippingRate,
 } from "@/lib/api/shipping";
-import { ApiError } from "@/lib/types/common";
+import { ApiError, isRoleDenied } from "@/lib/types/common";
 import type { ShippingRate, ShippingZone, ValidationResult } from "@/lib/types/shipping";
 import { formatMoney } from "@/lib/format/money";
 
@@ -125,7 +125,7 @@ const FORBIDDEN = "Only managers and above can change shipping settings.";
 // list of field errors as their messages; otherwise the backend's own message.
 function errorText(err: Error): string {
   if (err instanceof ApiError) {
-    if (err.status === 403) return FORBIDDEN;
+    if (isRoleDenied(err)) return FORBIDDEN;
     const detail = (err.body as { detail?: unknown } | undefined)?.detail;
     if (Array.isArray(detail)) {
       return detail

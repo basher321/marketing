@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 
+import { newTabHref } from "@/hooks/use-new-tab";
 import { Tile } from "@/components/analytics/ads-report";
 import InsightsCard from "@/components/organic/insights-card";
 import { Empty, OrganicHeader, PlatformTag, StatusBadge, errorText, postTime } from "@/components/organic/shared";
@@ -26,10 +27,10 @@ export default function OrganicDashboard() {
         subtitle="Write or generate posts, adapt them per platform, schedule, publish and track — without ad spend."
         action={
           <div className="flex flex-wrap gap-2">
-            <Link href="/marketing/organic/create?mode=manual" className="btn btn-secondary no-underline">
+            <Link href={newTabHref("/marketing/organic/create?mode=manual")} target="_blank" rel="noopener" className="btn btn-secondary no-underline">
               Create post
             </Link>
-            <Link href="/marketing/organic/create?mode=ai" className="btn no-underline">
+            <Link href={newTabHref("/marketing/organic/create?mode=ai")} target="_blank" rel="noopener" className="btn no-underline">
               Create with AI
             </Link>
           </div>
@@ -53,12 +54,18 @@ export default function OrganicDashboard() {
       </div>
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[
-          { href: "/marketing/organic/create?mode=manual", t: "Write a post", d: "Caption, media, platforms, schedule." },
-          { href: "/marketing/organic/create?mode=ai", t: "Create with AI", d: "From a prompt; you review before it goes out." },
+          // SPEC-FE-058: starting a new post opens its own tab.
+          { href: "/marketing/organic/create?mode=manual", t: "Write a post", d: "Caption, media, platforms, schedule.", fresh: true },
+          { href: "/marketing/organic/create?mode=ai", t: "Create with AI", d: "From a prompt; you review before it goes out.", fresh: true },
           { href: "/marketing/organic/photo", t: "Generate a photo", d: "Product or lifestyle images." },
           { href: "/marketing/organic/video", t: "Generate a video", d: "Short clips for Reels and TikTok." },
         ].map((a) => (
-          <Link key={a.href} href={a.href} className="card block text-inherit no-underline hover:border-accent">
+          <Link
+            key={a.href}
+            href={"fresh" in a ? newTabHref(a.href) : a.href}
+            {...("fresh" in a ? { target: "_blank", rel: "noopener" } : {})}
+            className="card block text-inherit no-underline hover:border-accent"
+          >
             <div className="font-semibold">{a.t} →</div>
             <p className="m-0 text-xs text-muted">{a.d}</p>
           </Link>

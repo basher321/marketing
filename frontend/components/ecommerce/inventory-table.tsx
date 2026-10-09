@@ -6,7 +6,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { dashboardKeys } from "@/lib/api/dashboard";
 import { adjustInventory, fetchInventory, inventoryKeys } from "@/lib/api/inventory";
 import { productKeys } from "@/lib/api/products";
-import { ApiError } from "@/lib/types/common";
+import { isRoleDenied } from "@/lib/types/common";
 import type { InventoryItem } from "@/lib/types/inventory";
 
 const COLUMN_COUNT = 9;
@@ -55,7 +55,7 @@ function AdjustRow({ item, onDone }: { item: InventoryItem; onDone: () => void }
   });
 
   const errorText =
-    adjust.error instanceof ApiError && adjust.error.status === 403
+    isRoleDenied(adjust.error)
       ? "Only managers and above can adjust stock."
       : adjust.error?.message;
 

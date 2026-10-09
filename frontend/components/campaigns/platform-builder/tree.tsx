@@ -13,7 +13,7 @@ import {
   duplicateGroup,
   duplicatePlatformAd,
 } from "@/lib/api/ads";
-import { ApiError } from "@/lib/types/common";
+import { ApiError, isRoleDenied } from "@/lib/types/common";
 import type { BuilderPlatform, Level, Platform, PlatformTree } from "@/lib/types/ads";
 
 // ---------------------------------------------------------------------------
@@ -249,7 +249,7 @@ export function useBuilder(): Ctx {
 
 export function errorText(err: unknown): string {
   if (err instanceof ApiError) {
-    if (err.status === 403) return "Only managers and above can edit campaigns.";
+    if (isRoleDenied(err)) return "Only managers and above can edit campaigns.";
     const detail = (err.body as { detail?: unknown } | undefined)?.detail;
     if (Array.isArray(detail)) {
       return detail

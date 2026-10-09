@@ -730,6 +730,51 @@ def _text_of(copy: dict[str, Any]) -> str:
     return " | ".join(str(p) for p in parts if p)
 
 
+MONEY_SYMBOLS = "$€£¥₹৳₦₱₩₫₺"
+FREE_SHIPPING = re.compile(r"\bfree\s+(?:shipping|delivery)\b|ফ্রি\s*ডেলিভারি", re.IGNORECASE)
+
+
+def _money_pattern(ctx: dict[str, Any]) -> re.Pattern[str]:
+    # A number next to a currency symbol or code (SPEC-BE-085 FR11).
+    codes = {ctx.get("currency") or "", *(p.get("currency") or "" for p in ctx["products"]), "tk", "taka", "bdt", "usd", "eur", "gbp", "inr", "rs"}
+    words = "|".join(sorted({re.escape(c.strip().lower()) for c in codes if c.strip()}, key=len, reverse=True))
+    sym = re.escape(MONEY_SYMBOLS)
+    num = r"(\d[\d,]*(?:\.\d{1,2})?)"
+    return re.compile(rf"(?:[{sym}]|\b(?:{words})\.?)\s?{num}|{num}\s?(?:[{sym}]|(?:{words})\b)", re.IGNORECASE)
+
+
+def _price_issues(ctx: dict[str, Any], ref: str, body: str) -> list[dict[str, Any]]:
+    """Amounts must be a featured product's price, compare-at price or saving,
+    or a number in the brief; free shipping must be in the brief."""
+    from app.ai.command_guard import numbers_in
+
+    issues: list[dict[str, Any]] = []
+    allowed = set(numbers_in(ctx.get("prompt") or ""))
+    for p in ctx["products"]:
+        price = Decimal(str(p["price"]))
+        allowed.add(price)
+        if p.get("was"):
+            allowed.update({Decimal(str(p["was"])), Decimal(str(p["was"])) - price})
+    for m in _money_pattern(ctx).finditer(body):
+        raw = (m.group(1) or m.group(2) or "").rstrip(",").replace(",", "")
+        try:
+            amount = Decimal(raw)
+        except ArithmeticError:
+            continue
+        if any(abs(amount - a) < Decimal("0.01") for a in allowed):
+            continue
+        if not ctx["products"]:
+            issues.append({"ref": ref, "severity": "warning", "rule": "price_claim", "source": "price_check",
+                           "message": f"Mentions the amount {m.group(0).strip()}, but no product is featured to check it against."})
+        else:
+            issues.append({"ref": ref, "severity": "error", "rule": "price_claim", "source": "price_check",
+                           "message": f"Mentions the amount {m.group(0).strip()}, which isn't a featured product's price or a number in the brief."})
+    if FREE_SHIPPING.search(body) and not FREE_SHIPPING.search(ctx.get("prompt") or ""):
+        issues.append({"ref": ref, "severity": "warning", "rule": "free_shipping_claim", "source": "price_check",
+                       "message": "Promises free shipping or delivery, which the brief doesn't mention. Check that it's true."})
+    return issues
+
+
 def _deterministic_checks(ctx: dict[str, Any], copy: dict[str, Any]) -> list[dict[str, Any]]:
     from app.ai.moderation import moderate_text
 
@@ -737,6 +782,7 @@ def _deterministic_checks(ctx: dict[str, Any], copy: dict[str, Any]) -> list[dic
     best = max([p["discount_pct"] for p in ctx["products"]] or [0])
     for ref, fields in copy.items():
         body = _text_of(fields)
+        issues += _price_issues(ctx, ref, body)
         passed, hits = moderate_text(body, ctx["forbidden"])
         if not passed:
             issues.append({"ref": ref, "severity": "error", "rule": "forbidden_terms", "source": "moderation", "message": f"Uses forbidden word(s): {', '.join(hits)}."})

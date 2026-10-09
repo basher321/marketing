@@ -19,3 +19,14 @@ export class ApiError extends Error {
     this.body = body;
   }
 }
+
+/**
+ * True only for the backend's role check (SPEC-FE-059): a 403 whose message is
+ * "Insufficient permissions…" (require_permission / require_role / Command Chat).
+ * Other 403s carry their own reason (SocialAPI or Zernio refusing, "Only the
+ * owner can …", an expired media link) and must show that text instead.
+ */
+export function isRoleDenied(err: unknown): boolean {
+  // err.message is the backend's {"error"} (AppError) or {"detail"} (HTTPException) text.
+  return err instanceof ApiError && err.status === 403 && err.message.startsWith("Insufficient permissions");
+}

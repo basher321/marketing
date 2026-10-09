@@ -12,7 +12,7 @@ import {
   workflowKeys,
   workflowVersionsKey,
 } from "@/lib/api/workflows";
-import { ApiError } from "@/lib/types/common";
+import { ApiError, isRoleDenied } from "@/lib/types/common";
 import type { WorkflowCatalogField, WorkflowDetailV2 } from "@/lib/types/workflows";
 
 const FORBIDDEN = "Only managers and above can edit workflows.";
@@ -20,7 +20,7 @@ const FORBIDDEN = "Only managers and above can edit workflows.";
 /** A readable message: 403 in plain words; FastAPI 422 field errors joined; else the backend's text. */
 export function wfErrorText(err: Error): string {
   if (err instanceof ApiError) {
-    if (err.status === 403) return FORBIDDEN;
+    if (isRoleDenied(err)) return FORBIDDEN;
     const detail = (err.body as { detail?: unknown } | undefined)?.detail;
     if (Array.isArray(detail)) {
       return detail

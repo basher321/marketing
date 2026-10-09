@@ -56,6 +56,10 @@ babel==2.18.0
 # ---- Images (SPEC-BE-074): crop/pad media to each platform's ratio ----
 pillow==12.0.0
 
+# ---- Video (SPEC-BE-093): a bundled ffmpeg binary (no system install) that
+# turns OpenAI images into a slideshow MP4 for Command Chat videos ----
+imageio-ffmpeg==0.6.0
+
 # ---- Testing ----
 pytest==9.0.3
 pytest-asyncio==1.4.0

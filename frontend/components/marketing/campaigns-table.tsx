@@ -4,8 +4,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { newTabHref } from "@/hooks/use-new-tab";
 import { fetchCampaigns, marketingKeys, marketingListKeys, setCampaignRunning } from "@/lib/api/marketing";
-import { ApiError } from "@/lib/types/common";
+import { isRoleDenied } from "@/lib/types/common";
 import type { CampaignListItem } from "@/lib/types/marketing";
 import { formatMoney } from "@/lib/format/money";
 
@@ -59,15 +60,15 @@ export default function CampaignsTable() {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: marketingKeys.all }),
   });
   const toggleError =
-    toggle.error instanceof ApiError && toggle.error.status === 403
+    isRoleDenied(toggle.error)
       ? "Only managers and above can pause or resume campaigns."
       : toggle.error?.message;
   return (
     <>
       <h2 className="section-title">
         Active Campaigns
-        {/* Opens the Campaign Wizard (the only campaign flow that exists). */}
-        <Link href="/marketing/paid" className="btn no-underline">
+        {/* SPEC-FE-058: opens Ad Manager (where Paid's "+ New campaign" goes) in a new tab. */}
+        <Link href={newTabHref("/marketing/paid/ad-manager")} target="_blank" rel="noopener" className="btn no-underline">
           + New Campaign
         </Link>
       </h2>

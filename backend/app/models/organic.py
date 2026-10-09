@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import DateTime, String, Text
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -28,8 +28,10 @@ class OrganicContent(Base, TenantScopedModel):
     hashtags: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
     cta: Mapped[str | None] = mapped_column(Text, nullable=True)
     link_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    media_ids: Mapped[list[str]] = mapped_column(ARRAY(String(36)), nullable=False, default=list)
-    product_ids: Mapped[list[str]] = mapped_column(ARRAY(String(36)), nullable=False, default=list)
+    # Live columns are uuid[] (a varchar[] bind fails on INSERT); as_uuid=False
+    # keeps the values plain strings in Python, like the String(36) ids.
+    media_ids: Mapped[list[str]] = mapped_column(ARRAY(UUID(as_uuid=False)), nullable=False, default=list)
+    product_ids: Mapped[list[str]] = mapped_column(ARRAY(UUID(as_uuid=False)), nullable=False, default=list)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="draft")
     approved_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -13,7 +13,7 @@ building a SQLAlchemy engine URL or an SMTP client — must call
 """
 import json
 from functools import lru_cache
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -120,6 +120,38 @@ class Settings(BaseSettings):
     LLM_MODEL: str = Field(default="claude-sonnet-5", description="Model identifier passed to the provider SDK.")
     LLM_DAILY_COST_CAP_CENTS: int = Field(
         default=2000, description="Hard daily spend ceiling for LLM calls, in cents."
+    )
+
+    # Local Ollama for AI Models (SPEC-BE-088): its OpenAI-compatible base URL.
+    OLLAMA_BASE_URL: str = Field(
+        default="http://localhost:11434/v1", description="Ollama's OpenAI-compatible API on this server (no key needed)."
+    )
+
+    # --- Embeddings for AI reply retrieval (SPEC-BE-087) ---
+    # One platform key for every company. "auto" recognises the provider from
+    # the key (and tries LLM_API_KEY when this key is empty); "none", an empty
+    # key, or a Claude/Groq key (no embeddings API) keep the full-text search
+    # only. The app always boots without it.
+    EMBEDDINGS_PROVIDER: Literal["auto", "none", "openai", "gemini", "voyage", "mistral", "cohere", "openai_compatible"] = Field(
+        default="auto",
+        description="Embedding provider: auto, none, openai, gemini, voyage, mistral, cohere or openai_compatible.",
+    )
+    EMBEDDINGS_API_KEY: SecretStr = Field(
+        default=SecretStr(""), description="API key of the embedding provider (platform-wide)."
+    )
+    EMBEDDINGS_MODEL: str = Field(
+        default="", description="Embedding model; empty = the provider's default (see ai/embeddings.PROVIDERS)."
+    )
+    EMBEDDINGS_MIN_SIMILARITY: float = Field(
+        default=0.70, ge=0.0, le=1.0,
+        description="Cosine a meaning-based match needs. Model-specific: 0.70 was measured for gemini-embedding-001 "
+                    "(SPEC-BE-087); re-measure with evals/run_reply_eval.py --similarities for another model.",
+    )
+    EMBEDDINGS_BASE_URL: str = Field(
+        default="", description="openai_compatible only: base URL ending before /embeddings, e.g. http://localhost:11434/v1."
+    )
+    EMBEDDINGS_DIMENSIONS: int = Field(
+        default=768, ge=64, le=3072, description="Vector size requested from the embedding model."
     )
 
     # --- Meta (SPEC-BE-054) ---

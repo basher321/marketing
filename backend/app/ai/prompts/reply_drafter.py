@@ -66,7 +66,10 @@ def build_reply_prompt(conversation_history: str, kb_context: str) -> str:
 #   friendly", 67-100 -> "playful and upbeat";
 # - style (0-100): 0-33 -> "concise: 2-3 sentences", 34-66 -> "moderately
 #   detailed: one short paragraph", 67-100 -> "detailed: thorough, step by step";
-# - primary_language -> "Write the reply in <language>";
+# - language (SPEC-BE-089, replacing "Write the reply in <primary_language>"):
+#   the reply follows the language and script of the customer's latest
+#   message; primary_language is only the fallback when that message has no
+#   clear language (numbers, an order number, emoji);
 # - brand_name -> the reply speaks for and may sign off as that brand;
 # - forbidden_terms -> listed as words the reply must never use (and enforced
 #   afterwards by moderation, which also blocks them).
@@ -90,7 +93,10 @@ def build_reply_system_prompt(brand: BrandVoice) -> str:
         f"You draft customer service replies on behalf of {speaker}.",
         f"Tone: {_TONE_TEXT[_band(brand.tone)]}.",
         f"Length and style: {_STYLE_TEXT[_band(brand.style)]}.",
-        f"Write the reply in this language: {brand.primary_language}.",
+        "Write the reply in the same language and script as the customer's latest message "
+        "(Bengali gets Bengali, Bengali written in Latin letters gets Latin letters). Use only "
+        "that one script: no words or letters from any other script. Only if "
+        f"that message has no clear language, write in this language: {brand.primary_language}.",
     ]
     if brand.brand_name:
         lines.append(f"You may sign off as {brand.brand_name}.")
@@ -112,7 +118,9 @@ def build_reply_system_prompt(brand: BrandVoice) -> str:
 # brand's tone band and filled with brand_name ("us" when none is set), with
 # sources=[] (nothing was retrieved, so nothing is cited), confidence
 # _CONFIDENCE_NO_GROUNDING, and fallback="no_grounding". It still passes
-# through moderation. Templates are English regardless of primary_language.
+# through moderation. SPEC-BE-089: when the latest customer message is mainly
+# Bengali script, the Bengali templates below are used; every other message
+# gets the English ones (fixed text exists only for these two languages).
 _FALLBACK_TEMPLATES = (
     "Thank you for contacting {brand}. To ensure you receive accurate information, a member "
     "of our team will follow up with you shortly.",
@@ -136,7 +144,40 @@ def _grounded_confidence(cited: int) -> float:
     return round(min(0.95, 0.60 + 0.10 * cited), 2) if cited else _CONFIDENCE_UNCITED
 
 
-def _fallback_text(brand: BrandVoice, band: int) -> str:
+# Bengali hand-over templates (SPEC-BE-089), same tone bands. Bengali attaches
+# the brand with a suffix, so a brand-less variant replaces "us".
+_FALLBACK_TEMPLATES_BN = (
+    "{brand}-এর সাথে যোগাযোগ করার জন্য ধন্যবাদ। আপনাকে সঠিক তথ্য দিতে আমাদের টিমের একজন সদস্য "
+    "শীঘ্রই আপনার সাথে যোগাযোগ করবেন।",
+    "{brand}-এ মেসেজ করার জন্য ধন্যবাদ! আপনি যেন সঠিক উত্তর পান, তাই আমাদের একজন টিম মেম্বার "
+    "শীঘ্রই আপনাকে জানাবেন।",
+    "{brand}-এ মেসেজ করার জন্য অনেক ধন্যবাদ! আমরা একদম ঠিক উত্তরটা দিতে চাই, তাই আমাদের টিমের "
+    "কেউ খুব শীঘ্রই আপনার সাথে যোগাযোগ করবে।",
+)
+_FALLBACK_TEMPLATES_BN_NO_BRAND = (
+    "আমাদের সাথে যোগাযোগ করার জন্য ধন্যবাদ। আপনাকে সঠিক তথ্য দিতে আমাদের টিমের একজন সদস্য "
+    "শীঘ্রই আপনার সাথে যোগাযোগ করবেন।",
+    "মেসেজ করার জন্য ধন্যবাদ! আপনি যেন সঠিক উত্তর পান, তাই আমাদের একজন টিম মেম্বার শীঘ্রই "
+    "আপনাকে জানাবেন।",
+    "মেসেজ করার জন্য অনেক ধন্যবাদ! আমরা একদম ঠিক উত্তরটা দিতে চাই, তাই আমাদের টিমের কেউ খুব "
+    "শীঘ্রই আপনার সাথে যোগাযোগ করবে।",
+)
+
+
+def is_bengali(text: str) -> bool:
+    """SPEC-BE-089 D1: mainly Bengali script = more than half of the letters
+    are in the Bengali block (U+0980-U+09FF). Digits, punctuation and emoji
+    don't count, so "অর্ডার #1234" is Bengali and "1234" is not."""
+    letters = [ch for ch in text if ch.isalpha() or 0x0980 <= ord(ch) <= 0x09FF]
+    bengali = sum(1 for ch in letters if 0x0980 <= ord(ch) <= 0x09FF)
+    return bool(letters) and bengali * 2 > len(letters)
+
+
+def _fallback_text(brand: BrandVoice, band: int, bengali: bool = False) -> str:
+    if bengali:
+        if brand.brand_name:
+            return _FALLBACK_TEMPLATES_BN[band].format(brand=brand.brand_name)
+        return _FALLBACK_TEMPLATES_BN_NO_BRAND[band]
     return _FALLBACK_TEMPLATES[band].format(brand=brand.brand_name or "us")
 
 
@@ -185,17 +226,18 @@ def generate_reply_draft(
         )
     brand = get_brand_voice(db, tenant_id)
     retrieved = retrieve_grounding(db, tenant_id, customer_messages[-1].body)
+    bengali = is_bengali(customer_messages[-1].body)
 
     if not retrieved:
         draft = ReplyDraft(
-            body=_fallback_text(brand, _band(brand.tone)),
+            body=_fallback_text(brand, _band(brand.tone), bengali),
             confidence=_CONFIDENCE_NO_GROUNDING,
             sources=[],
             moderation_passed=True,
             fallback="no_grounding",
         )
         logger.info("reply_draft_fallback", tenant_id=tenant_id, reason="no_grounding")
-        return _moderate(draft, brand, tenant_id)
+        return _moderate(draft, brand, tenant_id, bengali)
 
     completion = client.complete_with_usage(
         build_reply_system_prompt(brand),
@@ -229,7 +271,7 @@ def generate_reply_draft(
         cited=len(cited),
         confidence=draft.confidence,
     )
-    return _moderate(draft, brand, tenant_id)
+    return _moderate(draft, brand, tenant_id, bengali)
 
 
 # Moderation-failure behavior (SPEC-BE-027). Every draft goes through
@@ -241,12 +283,12 @@ def generate_reply_draft(
 # confidence 0.0 and fallback="moderation_rejected". If the safe template
 # itself fails moderation (e.g. the brand name contains a forbidden term),
 # DraftRejectedError (422) is raised and no draft is returned.
-def _moderate(draft: ReplyDraft, brand: BrandVoice, tenant_id: str) -> ReplyDraft:
+def _moderate(draft: ReplyDraft, brand: BrandVoice, tenant_id: str, bengali: bool = False) -> ReplyDraft:
     passed, hits = moderate_text(draft.body, brand.forbidden_terms)
     if passed:
         return draft
     logger.warning("reply_draft_moderation_rejected", tenant_id=tenant_id, matched_terms=hits)
-    safe_body = _fallback_text(brand, 1)
+    safe_body = _fallback_text(brand, 1, bengali)
     safe_passed, safe_hits = moderate_text(safe_body, brand.forbidden_terms)
     if not safe_passed:
         logger.warning(

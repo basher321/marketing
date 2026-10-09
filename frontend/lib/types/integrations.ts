@@ -59,7 +59,8 @@ export interface IntegrationTestResult {
 }
 
 // ---- AI models (SPEC-BE-053)
-export type AIProvider = "anthropic" | "openai" | "gemini" | "groq";
+// SPEC-BE-088 adds OpenRouter and a local Ollama (no key).
+export type AIProvider = "anthropic" | "openai" | "gemini" | "groq" | "openrouter" | "ollama";
 
 export interface AIModelProvider {
   provider: AIProvider;
@@ -79,6 +80,8 @@ export interface AIModelProvider {
   last_error: string | null;
   last_ok_at: string | null;
   docs_url: string;
+  /** False for a local provider that takes no key (Ollama, SPEC-BE-088). */
+  needs_key: boolean;
 }
 
 export interface AIModelList {

@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
 import { addAd, addAdSet, deleteAd, deleteAdSet, duplicateAd, duplicateAdSet, metaKeys } from "@/lib/api/meta";
-import { ApiError } from "@/lib/types/common";
+import { ApiError, isRoleDenied } from "@/lib/types/common";
 import type { BuilderTree, Issue, ObjectivesResult } from "@/lib/types/meta";
 
 export type Selection = { level: "campaign" | "ad_set" | "ad"; id: string };
@@ -32,7 +32,7 @@ export function useBuilder(): Ctx {
 
 export function errorText(err: unknown): string {
   if (err instanceof ApiError) {
-    if (err.status === 403) return "Only managers and above can edit campaigns.";
+    if (isRoleDenied(err)) return "Only managers and above can edit campaigns.";
     const detail = (err.body as { detail?: unknown } | undefined)?.detail;
     if (Array.isArray(detail)) {
       return detail

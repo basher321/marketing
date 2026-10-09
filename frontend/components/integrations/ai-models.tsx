@@ -107,11 +107,13 @@ function ModelCard({
   const [videoModel, setVideoModel] = useState(item.video_model ?? "");
   const [test, setTest] = useState<AIModelTestResult | null>(null);
   const listKey = [...integrationKeys.aiModels, item.provider, "models"];
+  // A local provider (Ollama, SPEC-BE-088) takes no key: it counts as "has a key".
+  const hasKey = Boolean(item.key_masked) || !item.needs_key;
   // The provider's live list, only once a key is saved (it's called with that key).
   const list = useQuery({
     queryKey: listKey,
     queryFn: () => fetchProviderModels(item.provider),
-    enabled: Boolean(item.key_masked),
+    enabled: hasKey,
     staleTime: 10 * 60 * 1000,
   });
   // No built-in default: an empty field is pre-filled with the provider's
@@ -160,7 +162,7 @@ function ModelCard({
     setModel(m);
     runTest.mutate(m);
   };
-  const needsModel = Boolean(item.key_masked) && !item.model;
+  const needsModel = hasKey && !item.model;
 
   let listNote: ReactNode = null;
   if (list.isFetching) listNote = "Loading the models your key can use…";
@@ -176,7 +178,7 @@ function ModelCard({
           {item.label}
         </div>
         <span className={`badge ${item.enabled ? "badge-success" : needsModel ? "badge-warn" : "badge-neutral"}`}>
-          {item.enabled ? "Active" : !item.key_masked ? "No key" : needsModel ? "Choose a model" : "Off"}
+          {item.enabled ? "Active" : !hasKey ? "No key" : needsModel ? "Choose a model" : "Off"}
         </span>
       </div>
       <div className="form-row mb-2">
@@ -186,7 +188,7 @@ function ModelCard({
         <PasswordInput
           id={`ai_key_${item.provider}`}
           autoComplete="off"
-          placeholder={item.key_masked ? "Leave empty to keep the saved key" : "Paste your API key"}
+          placeholder={item.key_masked ? "Leave empty to keep the saved key" : item.needs_key ? "Paste your API key" : "No key needed for a local Ollama"}
           value={key}
           onChange={(e) => setKey(e.target.value)}
         />
@@ -210,7 +212,7 @@ function ModelCard({
           onChange={setVideoModel}
         />
       )}
-      {item.key_masked ? (
+      {hasKey ? (
         <p className="m-0 mb-2 text-xs text-muted">
           {listNote}{" "}
           <button type="button" className="text-accent underline" disabled={list.isFetching} onClick={() => void list.refetch()}>
@@ -252,7 +254,7 @@ function ModelCard({
         <button
           type="button"
           className="btn btn-secondary btn-sm"
-          disabled={(!item.key_masked && !key.trim()) || !model.trim() || runTest.isPending}
+          disabled={(!hasKey && !key.trim()) || !model.trim() || runTest.isPending}
           title={model.trim() ? undefined : "Choose a model first"}
           onClick={() => runTest.mutate(undefined)}
         >
@@ -261,7 +263,7 @@ function ModelCard({
         <button
           type="button"
           className="btn btn-secondary btn-sm"
-          disabled={!item.key_masked || (!item.enabled && !item.model) || toggle.isPending}
+          disabled={!hasKey || (!item.enabled && !item.model) || toggle.isPending}
           title={needsModel ? "Choose and save a model first" : undefined}
           onClick={() => toggle.mutate()}
         >
@@ -287,7 +289,7 @@ function ModelCard({
         )}
       </div>
       <a href={item.docs_url} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs text-accent">
-        Get an API key ↗
+        {item.needs_key ? "Get an API key ↗" : "Download Ollama ↗"}
       </a>
       {err && (
         <p className="mb-0 mt-2 text-xs text-danger" role="alert">

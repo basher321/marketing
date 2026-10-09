@@ -36,3 +36,6 @@ Add (2026-10-01): `SHOPIFY_API_VERSION=2026-07`, and a `# --- Dev-only fakes ---
 Add (2026-10-08, SPEC-BE-084): a `# Zernio paid ads` section before `# Ad/Marketing Caps`, with `ZERNIO_API_KEY=` (empty; the operator pastes the server-wide key) and `ZERNIO_BASE_URL=https://zernio.com/api/v1`.
 
 Add (2026-10-03, SPEC-BE-074): under `# File Storage`, `STORAGE_PROVIDER=local` (was `s3`; s3 with the placeholder keys can't work), `STORAGE_ENDPOINT=`, `STORAGE_REGION=us-east-1`, `MEDIA_ROOT=media`, `MEDIA_URL_TTL_HOURS=24`, `PUBLIC_BASE_URL=http://localhost:8000` (Instagram needs this to be a public https address, e.g. a tunnel, or S3 storage).
+Add (2026-10-09, SPEC-BE-087): a `# Embeddings for AI reply retrieval` section with `EMBEDDINGS_PROVIDER=none`, `EMBEDDINGS_API_KEY=` (empty; the operator pastes one OpenAI or Gemini key used for every company), `EMBEDDINGS_MODEL=` and `EMBEDDINGS_DIMENSIONS=768`. There is no backend `.env.example`, so the lines were added to `backend/.env`.
+Change (2026-10-09, SPEC-BE-087 any-key amendment): `EMBEDDINGS_PROVIDER=auto`, plus `EMBEDDINGS_BASE_URL=` (empty; for an OpenAI-compatible server only).
+Add (2026-10-09, SPEC-BE-087): `EMBEDDINGS_MIN_SIMILARITY` is optional (default 0.70); set it only after measuring another model with `run_reply_eval.py --similarities`.

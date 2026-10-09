@@ -12,7 +12,8 @@ into approvable action plans), paired with a Next.js dashboard in `frontend/`.
 **This file covers the backend.** The frontend (Next.js 15 + React 19 +
 TypeScript, in `frontend/`) has its own authoritative guide,
 `frontend/CLAUDE.md`. Read that before touching frontend code. There is no
-`backend/migrations/`, no `backend/scripts/`, no `backend/tests/`, no
+`backend/migrations/`, no `backend/scripts/`, no `backend/tests/` (only
+`backend/evals/`, the golden sets of SPEC-BE-085/086), no
 `requirements-dev.txt`, and no backend `.env.example` (only a real
 `backend/.env`). The frontend's env template is `frontend/.env.local.example`.
 Verify with a directory listing before relying on any other path.
@@ -184,6 +185,29 @@ section before trusting any model.
   - **Tests:** swap `ai_campaign_service.creative_generate` and `landing_check`. `dev_fakes` also answers Gemini images and `example.com` pages.
   - **Command Chat:** the `create_ai_campaign` action (risk `draft`).
 - AI Models (SPEC-BE-053 amendment, 2026-10-02): default models are gemini-2.5-flash and openai/gpt-oss-120b; a 404 test says the model may be retired; the card's "Save & test" saves first.
+- AI Models providers (SPEC-BE-088, 2026-10-09): six providers.
+  - **Default fallback order** (= the `ai/providers.PROVIDERS` order): Claude → OpenAI → Gemini → Groq → OpenRouter → Ollama.
+  - **Ollama** is local (`OLLAMA_BASE_URL`), `needs_key=False`.
+  - **Company models only:** a company with its own AI Models never falls back to the `.env` `LLM_*` key.
+  - **pilotsonic (2026-10-09):** Claude `claude-sonnet-5-5` first, Gemini second. Its Groq key is invalid (401).
+  - **Every AI text feature uses this chain** (amendment): `/content/generate` was the last one calling without `db`/`tenant_id`. Image/video generation keeps its own order; embeddings stay one platform key.
+- AI replies in the customer's language (SPEC-BE-089, 2026-10-09): `reply_drafter` answers in the language and script of the customer's latest message (`primary_language` only when unclear). The fixed hand-over replies are Bengali when that message is mainly Bengali script (`is_bengali`), English otherwise. Command Chat, ad and organic copy still use `primary_language`.
+- Command Chat → Zernio (SPEC-BE-090, 2026-10-09): with a Zernio Facebook ads account connected, a Facebook/Instagram campaign request is `publish_zernio_campaign` (risk spend = owner approval; paused unless the user says run/publish/launch; the ad account must be the only one or named; `ExecContext.request_id` = plan + step is Zernio's Idempotency-Key). The context carries `zernio_ads`; without Zernio the chat still drafts in the direct Meta builder, which is unchanged.
+- Chat ad media (SPEC-BE-091 + SPEC-FE-056, 2026-10-09): the planner context has `media_library` (20 items, names matching the message first), so "use the Eid banner" resolves; when the question waits for `media id`, the chat shows "Choose from media library" (kind filter, name search, paging), and a pick answers `Use the image "<name>" (<id>)`.
+- Command Chat media chains (SPEC-BE-092 → SPEC-BE-093 + SPEC-FE-057, 2026-10-09):
+  - **Images:** Nano Banana (`gemini_image`), then OpenAI images. **Videos:** Google Flow, then an OpenAI
+    slideshow. Google Flow has no API, so this is Veo 3.1 (`gemini_video`) through the Gemini key.
+  - **Slideshow:** `openai_slideshow` has 2–6 OpenAI images with zoom and crossfades, made into an MP4 by the
+    bundled ffmpeg (`imageio-ffmpeg`). OpenAI shut down the Sora API on 2026-09-24, so Sora is not in the
+    chain.
+  - **Pinned chain:** the chain is pinned in `request.providers` (`generation_service._providers`), and
+    any failure moves to the next provider: at start, while polling, or a 429. Regenerate/edit inherit
+    it. Without any provider set up, the step fails 409 with a fixed text.
+  - **Chat-only:** `cp.CHAT_ONLY` keeps the slideshow out of the creative order and the Organic pages,
+    which keep their own order. The summary names who made it and why an earlier one failed;
+    `ResultItem.media {id, kind}` drives the inline preview (fresh URL from `GET /media/{id}`).
+  - **Models** are the company's own choices in AI Models. Claude has no image/video, so text follows the
+    company priority order (pilotsonic: Claude → Gemini → OpenAI).
 - Worldwide company settings (SPEC-BE-072 + SPEC-FE-048, 2026-10-02):
   - `utils/locale_data.py` (Babel/CLDR + pytz) serves every country, currency, language and timezone through `GET /tenants/locale-options`. `PATCH /tenants/me` validates against it.
   - Sign-up takes the browser's timezone/country as hints: old zone names are mapped, unusable values dropped, and the currency follows the country.
@@ -241,6 +265,44 @@ section before trusting any model.
     - X connects its posting account first, then its ads account.
   - **Media:** public URLs from the media library (needs `PUBLIC_BASE_URL` https or S3). Meta images can fall back to a base64 upload.
   - **Dev fakes:** `dev_fakes` answers `zernio.com`; the key `zernio_bad` gives 401.
+- **AI does exactly what was asked (2026-10-09): SPEC-BE-085.** Verified on the live DB (31/31 golden cases in stub mode, plus 18 rolled-back checks). Not yet measured against a real AI model.
+  - **Command Chat guard (`ai/command_guard.py`):** it runs on the model's raw actions before `validate_actions`.
+    - **Evidence** is only what the user typed: the message, plus the open clarification chain when the model says `new_request: false`. It is stored as `parsed_intent.evidence`.
+    - **Provenance:** numbers, countries, URLs, dates, times, genders and timezones must appear in the evidence. Ids must appear in the planner context, and SKUs must exist (rewritten to the stored case).
+      - A removed required value becomes the fixed-template question.
+      - A removed optional value falls back to its default, and the reply lists it.
+    - **Scope:** a non-read step whose request words aren't in the evidence is dropped as `not_requested`. Its dependents are dropped as `depends_on_dropped`.
+    - Free text (names, briefs, captions), `objective` and `rule_type` are not checked.
+  - **Planner:**
+    - `temperature=0`; a 400 that names temperature is retried without it (`providers.call` / `llm_client`). Other callers send no temperature.
+    - One retry when the answer is unparseable or structurally broken (`ca.structural_problems`).
+    - `today` is company-local.
+    - Products, campaigns and workflows the user names come first in the context.
+    - `parsed_intent` keeps `dropped` / `left_out`; the API reply shape is unchanged.
+  - **Create with AI:**
+    - `ad_planner.check_plan` enforces an explicitly stated age range, gender target and countries.
+    - The safety stage flags copy amounts that aren't a product price, compare-at price, saving or brief number (error), and free shipping the brief doesn't mention (warning).
+  - **Eval:** `backend/evals/run_command_eval.py` + `command_chat_cases.json` (see Commands).
+- **RAGAS for AI replies (2026-10-09): SPEC-BE-086.**
+  - **What it measures:** `backend/evals/run_reply_eval.py` + `reply_cases.json` measure `retrieve_grounding` (hit rate, free) and, with `--ragas`, the real `generate_reply_draft` output: faithfulness, context recall, context precision with reference, and factual correctness.
+  - **Judge:** the company's first OpenAI-compatible model.
+  - **Environment:** RAGAS lives only in `backend/.venv-eval` (`evals/requirements-eval.txt`, git-ignored). Installing it into `.venv` would change `pydantic-settings`, `rich` and `websockets`.
+  - **Privacy and certificates:** telemetry is off (`RAGAS_DO_NOT_TRACK`), and `truststore` uses the OS certificate store.
+  - **First result:** retrieval found the right source for 8/13 answerable questions. Paraphrases and Bengali miss because the search is keyword-only. The RAGAS scores are not measured yet: the Gemini key ran out of quota (429).
+- **Embedding search for AI replies (2026-10-09): SPEC-BE-087.** Built and verified with dev fakes on the live DB (18 rolled-back checks). The DDL is applied. **Off until a key is set.**
+  - **Storage:** `knowledge_embeddings` (`real[]` unit vectors, 768 dims, tenant-scoped). There is no pgvector and no ChromaDB: cosine is computed in Python over the tenant's rows.
+  - **Code:**
+    - `ai/embeddings.py`: OpenAI `/v1/embeddings` or Gemini `batchEmbedContents`, with a swappable `client_factory`.
+    - `services/knowledge_index_service.py`: units = enabled FAQs, in-effect policies and KB chunks. `refresh` embeds new or changed units (SHA-256, at most 50 per call) and deletes rows whose source is gone, inside a savepoint. The FAQ, policy and KB write paths are untouched.
+  - **Retrieval:** `retrieve_grounding` = full-text (`_fulltext`, unchanged), plus semantic hits, merged by reciprocal rank fusion. With embeddings off, or on any `EmbeddingError` / DB error, the result is exactly the full-text one.
+    - A semantic hit needs cosine ≥ `EMBEDDINGS_MIN_SIMILARITY`, default 0.70. That was measured for gemini-embedding-001 and is model-specific: re-measure with `run_reply_eval.py --similarities`.
+    - Live result with Gemini: 11/13 vs 8/13 keyword-only, with the unanswerable questions unchanged.
+  - **Settings:** `EMBEDDINGS_PROVIDER`, `EMBEDDINGS_API_KEY` (one platform key), `EMBEDDINGS_MODEL`, `EMBEDDINGS_DIMENSIONS` and `EMBEDDINGS_BASE_URL`.
+    - **Providers:** `auto` (default) | none | openai | gemini | voyage | mistral | cohere | openai_compatible.
+    - **`auto`:** recognises `AIza` / `pa-` / `sk-` keys, and tries `LLM_API_KEY` when the key is empty.
+    - **No embeddings API:** Claude (`sk-ant-`) and Groq (`gsk_`) keys leave it off, with a logged reason. Mistral and Cohere need the explicit provider.
+  - **Dev fakes:** `dev_fakes` answers every embedding API with word-hash vectors (not semantic).
+  - **Eval:** `run_reply_eval.py --compare [--fake-embeddings]` shows keyword-only vs hybrid. A real key is needed to measure the paraphrase and Bengali gains.
 - Structurally stubbed (routes exist, bodies minimal or "not_implemented"):
   `kb/documents` (list/ingest only, no embedding; the model matches the live
   table since SPEC-BE-071), webhooks (404), the CRM/messaging
@@ -268,6 +330,17 @@ mypy app
 
 alembic revision --autogenerate -m "message"           # alembic isn't initialized — no migrations dir exists
 alembic upgrade head
+
+# Command Chat golden set (SPEC-BE-085), on the live DB in one rolled-back transaction
+python evals/run_command_eval.py                       # stub model = recorded answers; tests the guards, no AI cost
+python evals/run_command_eval.py --live --ai-from <company slug>   # that company's saved AI models; spends its AI credits
+
+# AI customer-service replies with RAGAS (SPEC-BE-086): ONLY in the separate eval venv, never .venv
+python -m venv .venv-eval && .venv-eval\Scripts\pip install -r evals\requirements-eval.txt
+.venv-eval\Scripts\python evals\run_reply_eval.py                # retrieval hit rate only, no AI call
+.venv-eval\Scripts\python evals\run_reply_eval.py --compare      # keyword-only vs hybrid (SPEC-BE-087; uses EMBEDDINGS_* from .env)
+#   add --embeddings-from <slug> to use that company's saved OpenAI/Gemini key in memory; --similarities to tune the threshold
+.venv-eval\Scripts\python evals\run_reply_eval.py --ragas --ai-from <company slug> [--delay 10] [--out r.json]
 ```
 
 Current lint/type baseline (pre-existing, not caused by the spec work):
@@ -306,8 +379,10 @@ npx tsc --noEmit   # strict type check (ESLint is not configured)
 
 ## Live database vs ORM models
 
-The app connects to Postgres 18 via `DATABASE_URL_SYNC` in `backend/.env`
-(`marketing` on `localhost:5432`, psycopg2, sync `Session`). **Always use this
+The app connects to Postgres via `DATABASE_URL_SYNC` in `backend/.env`
+(`marketing` on `localhost:5432`, psycopg2, sync `Session`). `SELECT version()`
+reports PostgreSQL 16.15 (checked 2026-10-09). `pgvector` is not installed (and
+can't be built here), so SPEC-BE-087 stores embeddings as `real[]`. **Always use this
 Postgres database — never SQLite**, including for verification. The schema was
 created outside Alembic; it uses native `uuid` PKs, Postgres enums, arrays,
 and `jsonb`, and has 55 tables in `public`.
@@ -320,7 +395,8 @@ compare it with `information_schema.columns` for its table. Known state:
   values must be JSON-serializable, so stringify UUIDs), `PricingRule`,
   `ShippingZone`/`ShippingPolicy` (a zone has many policies = rates),
   `Campaign` (enums, `metadata` as `extra_metadata`, launch/approval
-  timestamps), `AdGroup`, `Ad`, `Audience`. `ApprovalQueue` still maps only
+  timestamps), `AdGroup`, `Ad`, `Audience`, `OrganicContent` (`media_ids`/`product_ids` are
+  `uuid[]`, mapped `ARRAY(UUID(as_uuid=False))` since 2026-10-09). `ApprovalQueue` still maps only
   some columns (not `requested_by_type`, `summary`, `payload`): insert approval
   rows through a Core table (see `campaign_service`). A DB trigger resets
   `campaigns.updated_at` to now() on every UPDATE.
@@ -552,7 +628,8 @@ the file directly before relying on this behavior existing.
   fix the models first.
 - No backend `.env.example` exists, only a real `backend/.env`. The frontend
   has `frontend/.env.local.example`.
-- `backend/scripts/` and `backend/tests/` don't exist.
+- `backend/scripts/` and `backend/tests/` don't exist. `backend/evals/` holds only the
+  golden sets and runners of SPEC-BE-085 (Command Chat) and SPEC-BE-086 (RAGAS, AI replies).
 - If you touch `requirements.txt`, env vars, or `config.py`, check
   `specs/SPEC-BE-001..003.md` and update the matching spec rather than editing
   the code in isolation.

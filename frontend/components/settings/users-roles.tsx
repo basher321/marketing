@@ -4,13 +4,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 
 import { createUser, deleteUser, fetchUsers, tenantKeys, updateUser } from "@/lib/api/tenant";
-import { ApiError } from "@/lib/types/common";
+import { ApiError, isRoleDenied } from "@/lib/types/common";
 import type { OrgUser, RoleType } from "@/lib/types/tenant";
 
 /** A readable message: 403 in plain words; FastAPI 422 field errors joined; else the backend's text. */
 export function apiErrorText(err: Error, forbidden: string): string {
   if (err instanceof ApiError) {
-    if (err.status === 403) return forbidden;
+    if (isRoleDenied(err)) return forbidden;
     const detail = (err.body as { detail?: unknown } | undefined)?.detail;
     if (Array.isArray(detail)) {
       return detail
@@ -182,7 +182,7 @@ function UserRow({ user }: { user: OrgUser }) {
 export default function UsersRoles() {
   const users = useQuery({ queryKey: tenantKeys.users, queryFn: fetchUsers, retry: false });
   const [adding, setAdding] = useState(false);
-  const forbidden = users.error instanceof ApiError && users.error.status === 403;
+  const forbidden = isRoleDenied(users.error);
 
   return (
     <div className="card">

@@ -6,7 +6,7 @@ import { useState, type FormEvent } from "react";
 import PasswordInput from "@/components/auth/password-input";
 import { disconnectIntegration, integrationKeys, saveIntegration, testIntegration } from "@/lib/api/integrations";
 import { metaConnectUrl } from "@/lib/api/meta";
-import { ApiError } from "@/lib/types/common";
+import { ApiError, isRoleDenied } from "@/lib/types/common";
 import type { CatalogProvider, IntegrationStatus, IntegrationTestResult } from "@/lib/types/integrations";
 
 const FORBIDDEN = "Only managers and above can change integrations.";
@@ -14,7 +14,7 @@ const FORBIDDEN = "Only managers and above can change integrations.";
 /** A readable message: 403 in plain words; FastAPI 422 field errors joined; else the backend's text. */
 export function apiErrorText(err: Error, forbidden: string): string {
   if (err instanceof ApiError) {
-    if (err.status === 403) return forbidden;
+    if (isRoleDenied(err)) return forbidden;
     const detail = (err.body as { detail?: unknown } | undefined)?.detail;
     if (Array.isArray(detail)) {
       return detail

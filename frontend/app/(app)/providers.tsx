@@ -10,6 +10,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { rememberNewThingTab } from "@/hooks/use-new-tab";
 import { clearAuthToken, getAuthToken } from "@/lib/auth/token";
 import { ApiError } from "@/lib/types/common";
 
@@ -66,6 +67,7 @@ export default function Providers({ children }: { children: ReactNode }) {
   // server check is out of scope.
   const [authenticated, setAuthenticated] = useState(false);
   useEffect(() => {
+    rememberNewThingTab(); // SPEC-FE-058: a tab opened for a new thing (nt=1)
     if (getAuthToken() === null) {
       router.replace("/login");
     } else {

@@ -63,7 +63,7 @@ function paramText(value: unknown): string {
 function ResultLink({ href }: { href: string }) {
   if (href.startsWith("/")) {
     return (
-      <Link href={href} className="text-accent underline">
+      <Link href={href} target="_blank" rel="noopener" className="text-accent underline">
         Open
       </Link>
     );

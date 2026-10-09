@@ -20,7 +20,7 @@ import {
 import { fetchCreative } from "@/lib/api/content";
 import { marketingKeys, marketingListKeys } from "@/lib/api/marketing";
 import type { Audience, CampaignDetail, CampaignDraftUpdate, WizardStep } from "@/lib/types/campaigns";
-import { ApiError } from "@/lib/types/common";
+import { ApiError, isRoleDenied } from "@/lib/types/common";
 import type { CampaignObjective } from "@/lib/types/content";
 import { formatMoney } from "@/lib/format/money";
 
@@ -57,7 +57,7 @@ const FORBIDDEN = "Only managers and above can create or launch campaigns.";
 /** A readable message: 403 in plain words; FastAPI 422 field errors joined; else the backend's text. */
 export function errorText(err: Error, forbidden = FORBIDDEN): string {
   if (err instanceof ApiError) {
-    if (err.status === 403) return forbidden;
+    if (isRoleDenied(err)) return forbidden;
     const detail = (err.body as { detail?: unknown } | undefined)?.detail;
     if (Array.isArray(detail)) {
       return detail

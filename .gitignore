@@ -8,6 +8,7 @@
 
 # Python
 .venv/
+.venv-eval/
 __pycache__/
 *.py[cod]
 .mypy_cache/

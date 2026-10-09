@@ -162,3 +162,17 @@ Comment moderation, best-time-to-post suggestions, first-comment hashtags, and r
   - 20:00 Asia/Dhaka → 14:00 UTC; unknown timezone 422; past time 422;
   - http link refused; offset in the local time refused; `keep_media` must be true.
 - **Pending (live DB):** the DDL, then acceptance 1–11.
+
+## Amendment (2026-10-09): `organic_contents.media_ids` / `product_ids` are `uuid[]`
+
+- **Reported by the user:** "NetworkError when attempting to fetch resource" after clicking "Approve &
+  open the post editor" on /marketing/organic/photo.
+- **Cause:** the model mapped both columns as `ARRAY(String(36))`, but the live columns are `uuid[]`.
+  Every INSERT of a post with media failed with `DatatypeMismatch` (500). A 500 carries no CORS header,
+  so Firefox showed a NetworkError.
+- **Fix:** `models/organic.py` maps them as `ARRAY(UUID(as_uuid=False))`; the values stay strings. A scan of
+  every live `uuid[]` column found no other mismatch (`pricing_rules.scope_ids` and
+  `ai_campaign_runs.campaign_ids` were already right).
+- **Verified:** on pilotsonic's real image, rolled back. "Approve & open the post editor" with AI copy
+  → 200 (Claude copy, content approved with the image), with its own caption → 200, approve only → 200.
+  Ruff and mypy are at their baselines.

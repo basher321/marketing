@@ -4,8 +4,8 @@ One function per API family, all through `httpx` (already installed), so no
 provider SDK is needed. Each returns (text, input_tokens, output_tokens) and
 raises ProviderCallError with a short, secret-free message on any failure.
 
-Gemini and Groq expose OpenAI-compatible chat-completions endpoints, so they
-share the OpenAI adapter with a different base URL.
+Gemini, Groq, OpenRouter and Ollama expose OpenAI-compatible chat-completions
+endpoints, so they share the OpenAI adapter with a different base URL.
 """
 import re
 from collections.abc import Callable
@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+
+from app.config import get_settings
 
 
 @dataclass(frozen=True)
@@ -27,11 +29,18 @@ class ProviderSpec:
     # 2026-10-02, rule 4), and the same for image models (empty = no images).
     prefer: str
     prefer_image: str = ""
+    # False for a local server that takes no key (Ollama, SPEC-BE-088).
+    needs_key: bool = True
 
+
+# Local Ollama (SPEC-BE-088): its OpenAI-compatible API on this server.
+_OLLAMA = get_settings().OLLAMA_BASE_URL.rstrip("/")
 
 # No default model (SPEC-BE-053 amendment 2026-10-02): providers retire models
 # without notice, so the company always chooses one from the provider's live
-# list (list_models below) and nothing is picked silently.
+# list (list_models below) and nothing is picked silently. The tuple order is
+# the default fallback order (SPEC-BE-088): Claude, OpenAI, Gemini, Groq,
+# OpenRouter, Ollama.
 PROVIDERS: tuple[ProviderSpec, ...] = (
     ProviderSpec("anthropic", "Anthropic Claude", "https://api.anthropic.com/v1/messages", "anthropic", "https://console.anthropic.com/settings/keys",
                  "https://api.anthropic.com/v1/models?limit=1000", "sonnet"),
@@ -41,6 +50,10 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
                  "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", "flash", "flash-image"),
     ProviderSpec("groq", "Groq", "https://api.groq.com/openai/v1/chat/completions", "openai", "https://console.groq.com/keys",
                  "https://api.groq.com/openai/v1/models", "gpt-oss"),
+    ProviderSpec("openrouter", "OpenRouter", "https://openrouter.ai/api/v1/chat/completions", "openai", "https://openrouter.ai/settings/keys",
+                 "https://openrouter.ai/api/v1/models", "gpt-oss"),
+    ProviderSpec("ollama", "Ollama (local)", f"{_OLLAMA}/chat/completions", "openai", "https://ollama.com/download",
+                 f"{_OLLAMA}/models", "llama", needs_key=False),
 )
 BY_PROVIDER = {p.provider: p for p in PROVIDERS}
 
@@ -75,28 +88,41 @@ def call(
     user_prompt: str,
     max_tokens: int,
     timeout_s: float,
+    temperature: float | None = None,
 ) -> tuple[str, int, int]:
     spec = BY_PROVIDER.get(provider)
     if spec is None:
         raise ProviderCallError(f"Unknown provider {provider}.")
+    body: dict[str, Any]
+    if spec.style == "anthropic":
+        headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
+        body = {"model": model, "max_tokens": max_tokens, "system": system_prompt, "messages": [{"role": "user", "content": user_prompt}]}
+    else:
+        headers = {"Authorization": f"Bearer {api_key or 'none'}", "content-type": "application/json"}
+        # OpenAI's newer models (GPT-5, o-series) reject max_tokens and every
+        # OpenAI chat model accepts max_completion_tokens (SPEC-BE-088
+        # amendment 2026-10-09). The other OpenAI-style APIs keep max_tokens.
+        limit_name = "max_completion_tokens" if provider == "openai" else "max_tokens"
+        body = {
+            "model": model,
+            limit_name: max_tokens,
+            "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+        }
+    if temperature is not None:
+        body["temperature"] = temperature
     try:
         with client_factory(timeout_s) as client:
-            if spec.style == "anthropic":
-                resp = client.post(
-                    spec.url,
-                    headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                    json={"model": model, "max_tokens": max_tokens, "system": system_prompt, "messages": [{"role": "user", "content": user_prompt}]},
-                )
-            else:
-                resp = client.post(
-                    spec.url,
-                    headers={"Authorization": f"Bearer {api_key}", "content-type": "application/json"},
-                    json={
-                        "model": model,
-                        "max_tokens": max_tokens,
-                        "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-                    },
-                )
+            resp = client.post(spec.url, headers=headers, json=body)
+            # A provider that wants the newer name (e.g. an OpenAI model via
+            # OpenRouter): ask once more with it.
+            if resp.status_code == 400 and "max_tokens" in body and "max_completion_tokens" in _error_text(resp):
+                body["max_completion_tokens"] = body.pop("max_tokens")
+                resp = client.post(spec.url, headers=headers, json=body)
+            # Some models accept only their default temperature (SPEC-BE-085
+            # FR6): ask once more without it instead of failing over.
+            if temperature is not None and resp.status_code == 400 and "temperature" in _error_text(resp).lower():
+                body.pop("temperature")
+                resp = client.post(spec.url, headers=headers, json=body)
     except httpx.TimeoutException:
         raise ProviderCallError(f"Timed out after {timeout_s:.0f}s.") from None
     except httpx.HTTPError as exc:
@@ -182,7 +208,7 @@ def list_models(provider: str, api_key: str, timeout_s: float) -> dict[str, Any]
     elif provider == "gemini":
         headers = {"x-goog-api-key": api_key}  # header, never the query string
     else:
-        headers = {"Authorization": f"Bearer {api_key}"}
+        headers = {"Authorization": f"Bearer {api_key or 'none'}"}
     try:
         with client_factory(timeout_s) as client:
             resp = client.get(spec.models_url, headers=headers)

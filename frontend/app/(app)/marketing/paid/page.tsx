@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Suspense, useState } from "react";
 
+import { newTabHref } from "@/hooks/use-new-tab";
 import AdsReport from "@/components/analytics/ads-report";
 import { AdSetsList, AdsList } from "@/components/campaigns/paid-lists";
 import CampaignWizard from "@/components/campaigns/wizard";
@@ -49,7 +50,7 @@ function AIRuns() {
     <div className="card" style={{ padding: 0 }}>
       <div className="flex items-center justify-between p-4">
         <span className="font-semibold">AI runs</span>
-        <Link href="/marketing/paid/ai/new" className="btn btn-sm">
+        <Link href={newTabHref("/marketing/paid/ai/new")} target="_blank" rel="noopener" className="btn btn-sm">
           Create with AI
         </Link>
       </div>
@@ -145,7 +146,7 @@ function CampaignList() {
           <h1 className="m-0 mb-1 text-[22px] font-bold">Paid Marketing</h1>
           <p className="m-0 text-muted">Campaign → Ad set → Ad, published to the connected ad platforms.</p>
         </div>
-        <Link href="/marketing/paid/ad-manager" className="btn">
+        <Link href={newTabHref("/marketing/paid/ad-manager")} target="_blank" rel="noopener" className="btn">
           + New campaign
         </Link>
       </div>

@@ -47,3 +47,9 @@ AC-006 Every FR/NFR mapped to a package
 
 ## Amendment (SPEC-BE-074, 2026-10-03)
 - **Added `pillow==12.0.0`:** crops or pads media library images to each platform's ratio (1:1, 4:5, 9:16, 1.91:1), and fits Sora reference images to the video size. Approved by the user (decision D3). Videos are still never transcoded (no ffmpeg).
+
+## Amendment (SPEC-BE-093, 2026-10-09)
+
+Added `imageio-ffmpeg==0.6.0`, under "Video". It ships a static ffmpeg binary (7.1, with libx264) as a
+platform wheel, so no system ffmpeg is needed. Command Chat uses it to turn OpenAI images into a slideshow
+MP4, because OpenAI's Sora video API shut down on 2026-09-24.

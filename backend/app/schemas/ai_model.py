@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-ProviderName = Literal["anthropic", "openai", "gemini", "groq"]
+ProviderName = Literal["anthropic", "openai", "gemini", "groq", "openrouter", "ollama"]
 
 
 class AIModelProvider(BaseModel):
@@ -25,6 +25,8 @@ class AIModelProvider(BaseModel):
     last_error: str | None
     last_ok_at: datetime | None
     docs_url: str
+    # False for a local provider that takes no key (Ollama, SPEC-BE-088).
+    needs_key: bool = True
 
 
 class EnvFallback(BaseModel):
@@ -50,7 +52,7 @@ class AIModelUpdate(BaseModel):
 
 
 class AIModelOrder(BaseModel):
-    order: list[ProviderName] = Field(min_length=1, max_length=4)
+    order: list[ProviderName] = Field(min_length=1, max_length=6)
 
 
 class AIModelTestResult(BaseModel):

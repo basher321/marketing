@@ -39,7 +39,8 @@ logger = structlog.get_logger(__name__)
 POLL_INTERVAL_S = 10.0
 VIDEO_TIMEOUT_S = 600
 STALE_AFTER = timedelta(minutes=2)
-LABELS = {"openai_image": "OpenAI images", "gemini_image": "Gemini images", "gemini_video": "Google Veo", "openai_video": "OpenAI Sora"}
+LABELS = {"openai_image": "OpenAI images", "gemini_image": "Gemini images", "gemini_video": "Google Veo", "openai_video": "OpenAI Sora",
+          "openai_slideshow": "OpenAI slideshow"}
 SETUP_HINT = "Choose an image or video model for OpenAI or Gemini in Integrations › AI Models (or add an MCP creative tool)."
 
 
@@ -92,7 +93,14 @@ def list_jobs(db: Session, tenant_id: str, kind: str | None, status: str | None,
 # ---------------------------------------------------------------------------
 # Readiness
 # ---------------------------------------------------------------------------
-def _providers(db: Session, tenant_id: str, kind: str) -> list[Any]:
+def _providers(db: Session, tenant_id: str, kind: str, only: list[str] | None = None) -> list[Any]:
+    """The ready providers for a kind, in the company order. A request's
+    `providers` list (SPEC-BE-092/093: Command Chat's chain, Google then
+    OpenAI) replaces that order with exactly those providers, tried in that
+    order; regenerate/edit inherit it."""
+    if only:
+        pinned = [p for p in (cp.provider(k) for k in only) if p is not None and kind in p.kinds]
+        return [p for p in pinned if p.available(db, tenant_id)]
     return [p for p in cp.ordered(db, tenant_id, kind) if p.available(db, tenant_id)]
 
 
@@ -122,10 +130,23 @@ def readiness(db: Session, tenant_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Guards
 # ---------------------------------------------------------------------------
-def _estimate(kind: str, req: dict[str, Any], count: int) -> int:
+def _video_estimate(provider: Any, req: dict[str, Any]) -> int:
+    """What this provider would really make for the request: Veo/Sora are
+    priced per generated second at the length they support (Veo max 8 s);
+    the OpenAI slideshow is priced per image (SPEC-BE-093 amendment)."""
+    creq = cp.CreativeRequest(kind="video", aspect_ratio=req.get("aspect_ratio"), duration_s=int(req.get("duration_s") or 8))
+    seconds = int(provider.supported(creq).get("duration_s") or creq.duration_s or 8)
+    if provider.key == "openai_slideshow":
+        return int(provider.frames(seconds)) * cp.IMAGE_COST_CENTS["openai_image"]
+    return cp.VIDEO_CENTS_PER_SECOND.get(provider.key, max(cp.VIDEO_CENTS_PER_SECOND.values())) * seconds
+
+
+def _estimate(kind: str, req: dict[str, Any], count: int, providers: list[Any]) -> int:
+    """Worst case over the providers that may run (any of them can end up
+    making it), not the requested length at the highest per-second rate."""
     if kind == "image":
         return max(cp.IMAGE_COST_CENTS.values()) * count
-    return max(cp.VIDEO_CENTS_PER_SECOND.values()) * int(req.get("duration_s") or 8)
+    return max((_video_estimate(p, req) for p in providers), default=0)
 
 
 def _cost_guard(db: Session, tenant_id: str, estimate: int) -> None:
@@ -186,10 +207,11 @@ def start(db: Session, tenant_id: str, actor: str | None, kind: str, req: dict[s
         from app.services.organic_service import products
 
         products(db, tenant_id, ids=[str(p) for p in req["product_ids"]])
-    if not _providers(db, tenant_id, kind):
+    ready = _providers(db, tenant_id, kind, req.get("providers"))
+    if not ready:
         what = "a video" if kind == "video" else "an image"
         raise ConflictError(f"Set up {what} model in Integrations › AI Models first.")
-    _cost_guard(db, tenant_id, _estimate(kind, req, count))
+    _cost_guard(db, tenant_id, _estimate(kind, req, count, ready))
     if organic_content_id:
         req["organic_content_id"] = organic_content_id
     jobs = []
@@ -325,7 +347,25 @@ def run_job(db: Session, job_id: str) -> None:
     except AppError as exc:
         _fail(db, job, str(exc.detail))
         return
-    providers = _providers(db, tenant_id, job.kind)
+    pinned = bool((job.request or {}).get("providers"))
+    providers = _providers(db, tenant_id, job.kind, (job.request or {}).get("providers"))
+    if job.kind == "image" and pinned:
+        # A pinned chain (SPEC-BE-093) records every failed provider, also
+        # when a later one succeeds, so the chat can say who made it and why.
+        failed: list[tuple[str, str]] = []
+        for provider in providers:
+            try:
+                result = cp.generate(db, tenant_id, creq, [provider])
+            except cp.AllProvidersFailed as exc:
+                failed += exc.attempts
+                for key, err in exc.attempts:
+                    _attempt(job, key, err)
+                continue
+            db.commit()  # _finish refreshes the job; keep the recorded attempts
+            _finish(db, job, result)
+            return
+        _fail(db, job, str(cp.AllProvidersFailed("image", failed)))
+        return
     if job.kind == "image":
         try:
             result = cp.generate(db, tenant_id, creq, providers)
@@ -347,18 +387,29 @@ def run_job(db: Session, job_id: str) -> None:
         job.effective = {**eff, "provider": provider.key, "notes": _notes(job.request or {}, eff, provider.key),
                          "last_poll_at": _now().isoformat()}
         if isinstance(started, cp.CreativeResult):
+            db.commit()  # _finish refreshes the job; keep effective/notes/attempts
             _finish(db, job, started)
             return
         job.provider_ref = started
         _attempt(job, provider.key, "started")
         db.commit()
-        _poll_until_done(db, job, provider)
+        # A pinned chain (SPEC-BE-093) moves on when the provider fails while
+        # running; the last provider, and unpinned jobs, fail the job as before.
+        more = pinned and provider is not providers[-1]
+        try:
+            _poll_until_done(db, job, provider, fail_job=not more)
+        except cp.ProviderFailed:
+            job.provider, job.provider_ref = None, None
+            db.commit()
+            continue
         return
     _fail(db, job, "No video provider could start: " + "; ".join(a["outcome"] for a in job.attempts or []))
 
 
-def _poll_once(db: Session, job: GenerationJob, provider: Any) -> bool:
-    """True when the job ended (succeeded / failed / cancelled)."""
+def _poll_once(db: Session, job: GenerationJob, provider: Any, fail_job: bool = True) -> bool:
+    """True when the job ended (succeeded / failed / cancelled). With
+    fail_job=False a provider failure is recorded and re-raised instead, so
+    run_job can try the next provider of a pinned chain."""
     db.refresh(job)
     if job.status != "running":
         return True
@@ -366,6 +417,9 @@ def _poll_once(db: Session, job: GenerationJob, provider: Any) -> bool:
         result = provider.poll(db, str(job.tenant_id), str(job.provider_ref))
     except cp.ProviderFailed as exc:
         _attempt(job, provider.key, str(exc))
+        if not fail_job:
+            db.commit()
+            raise
         _fail(db, job, f"{LABELS.get(provider.key, provider.key)}: {exc}")
         return True
     if result is None:
@@ -378,17 +432,17 @@ def _poll_once(db: Session, job: GenerationJob, provider: Any) -> bool:
     return True
 
 
-def _poll_until_done(db: Session, job: GenerationJob, provider: Any) -> None:
+def _poll_until_done(db: Session, job: GenerationJob, provider: Any, fail_job: bool = True) -> None:
     deadline = time.monotonic() + VIDEO_TIMEOUT_S
     while time.monotonic() < deadline:
-        if _poll_once(db, job, provider):
+        if _poll_once(db, job, provider, fail_job):
             return
         time.sleep(POLL_INTERVAL_S)
     _fail(db, job, f"Timed out after {VIDEO_TIMEOUT_S // 60} minutes.")
 
 
 def _provider(db: Session, tenant_id: str, key: str) -> Any:
-    return cp.BUILT_IN.get(key) or cp.mcp_providers(db, tenant_id).get(key)
+    return cp.provider(key) or cp.mcp_providers(db, tenant_id).get(key)
 
 
 def resume_stale(db: Session) -> int:

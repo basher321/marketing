@@ -11,6 +11,7 @@ import { fetchProducts, productKeys } from "@/lib/api/products";
 import { fetchSocialAccounts, socialKeys } from "@/lib/api/social";
 import type { AICreate } from "@/lib/types/organic";
 import { PLATFORM_LABEL, PLATFORMS, type SocialPlatform } from "@/lib/types/social";
+import { useCreatedItemTab } from "@/hooks/use-new-tab";
 
 import MediaPicker from "./media-picker";
 import { errorText } from "./shared";
@@ -43,7 +44,6 @@ function PlatformChooser({ value, onChange }: { value: SocialPlatform[]; onChang
 }
 
 function ManualForm() {
-  const router = useRouter();
   const [caption, setCaption] = useState("");
   const [hashtags, setHashtags] = useState("");
   const [cta, setCta] = useState("");
@@ -52,6 +52,7 @@ function ManualForm() {
   const [platforms, setPlatforms] = useState<SocialPlatform[]>(["facebook", "instagram"]);
   const [adapt, setAdapt] = useState<"rules" | "ai">("rules");
   const strictest = platforms.length ? Math.min(...platforms.map((p) => LIMITS[p])) : 0;
+  const newTab = useCreatedItemTab();
   const create = useMutation({
     mutationFn: () =>
       createManual({
@@ -63,7 +64,8 @@ function ManualForm() {
         targets: platforms.map((platform) => ({ platform })),
         adapt,
       }),
-    onSuccess: (c) => router.push(`/marketing/organic/content/${c.id}`),
+    onSuccess: (c) => newTab.open(`/marketing/organic/content/${c.id}`), // SPEC-FE-058
+    onError: () => newTab.cancel(),
   });
   return (
     <div className="card" data-testid="manual-form">
@@ -105,7 +107,7 @@ function ManualForm() {
           <option value="ai">Adapt with AI (tone, hashtags and CTA per platform)</option>
         </select>
       </div>
-      <button type="button" className="btn" disabled={!caption.trim() || platforms.length === 0 || create.isPending} onClick={() => create.mutate()}>
+      <button type="button" className="btn" disabled={!caption.trim() || platforms.length === 0 || create.isPending} onClick={() => { newTab.begin(); create.mutate(); }}>
         {create.isPending ? "Creating…" : "Create versions & preview"}
       </button>
       {create.isError && <p className="m-0 mt-2 text-xs text-danger" role="alert">{errorText(create.error)}</p>}
@@ -114,7 +116,6 @@ function ManualForm() {
 }
 
 function AIForm() {
-  const router = useRouter();
   const [prompt, setPrompt] = useState("");
   const [productIds, setProductIds] = useState<string[]>([]);
   const [tone, setTone] = useState("");
@@ -126,6 +127,7 @@ function AIForm() {
   const [duration, setDuration] = useState(8);
   const products = useQuery({ queryKey: productKeys.list, queryFn: fetchProducts });
   const readiness = useQuery({ queryKey: generationKeys.readiness, queryFn: fetchGenerationReadiness });
+  const newTab = useCreatedItemTab();
   const create = useMutation({
     mutationFn: () =>
       createAI({
@@ -140,7 +142,8 @@ function AIForm() {
           generation: mediaMode.startsWith("generate") ? { ...(ratio ? { aspect_ratio: ratio } : {}), ...(mediaMode === "generate_video" ? { duration_s: duration } : {}) } : {},
         },
       }),
-    onSuccess: (c) => router.push(`/marketing/organic/content/${c.id}`),
+    onSuccess: (c) => newTab.open(`/marketing/organic/content/${c.id}`), // SPEC-FE-058
+    onError: () => newTab.cancel(),
   });
   const genReady = mediaMode === "generate_photo" ? readiness.data?.image_ready : mediaMode === "generate_video" ? readiness.data?.video_ready : true;
   return (
@@ -224,7 +227,7 @@ function AIForm() {
           </Link>
         </p>
       )}
-      <button type="button" className="btn" disabled={prompt.trim().length < 3 || platforms.length === 0 || !genReady || create.isPending} onClick={() => create.mutate()}>
+      <button type="button" className="btn" disabled={prompt.trim().length < 3 || platforms.length === 0 || !genReady || create.isPending} onClick={() => { newTab.begin(); create.mutate(); }}>
         {create.isPending ? "Writing…" : "Generate"}
       </button>
       <p className="m-0 mt-2 text-xs text-muted">AI drafts always stop for your review and approval before anything is published.</p>

@@ -1,0 +1,274 @@
+{
+  "about": "Command Chat golden set (SPEC-BE-085 FR12). Each case: turns (message + the recorded model answer used in stub mode; a list = successive answers, for the retry) and what the system must end with. Placeholders: @date:+N (company-local today + N days), @zone:<name>, @campaign:<name>. Starter set: grow it with real user commands.",
+  "cases": [
+    {
+      "id": "meta_invented_values",
+      "what": "The model invents budget, duration, countries and link: all become questions.",
+      "turns": [{"message": "Create a Facebook campaign for SKU-TSHIRT-RED",
+        "model_output": {"new_request": true, "summary": "Meta campaign", "ask": [], "actions": [
+          {"type": "create_meta_campaign_draft", "params": {"name": "Red T-Shirt", "objective": "sales", "skus": ["SKU-TSHIRT-RED"], "budget": 50, "duration_days": 7, "countries": ["BD"], "destination_url": "https://shop.example.com/tshirt"}, "description": "Draft the campaign", "depends_on": []}]}}],
+      "expect": {"kind": "clarification", "asks": ["budget", "duration days", "countries", "destination url"]}
+    },
+    {
+      "id": "meta_values_given",
+      "what": "Every value is in the message (taka, country names, URL): the plan keeps them.",
+      "turns": [{"message": "Create a Facebook sales campaign for SKU-TSHIRT-RED, 500 taka daily for 10 days in Bangladesh and India, link https://shop.example.com/tshirt",
+        "model_output": {"new_request": true, "summary": "Meta campaign", "ask": [], "actions": [
+          {"type": "create_meta_campaign_draft", "params": {"name": "Red T-Shirt", "objective": "sales", "skus": ["SKU-TSHIRT-RED"], "budget": 500, "duration_days": 10, "countries": ["BD", "IN"], "destination_url": "https://shop.example.com/tshirt"}, "description": "Draft the campaign", "depends_on": []}]}}],
+      "expect": {"kind": "plan", "actions": [{"type": "create_meta_campaign_draft", "params": {"budget": 500, "duration_days": 10, "countries": ["BD", "IN"], "destination_url": "https://shop.example.com/tshirt"}}], "dropped": []}
+    },
+    {
+      "id": "meta_unrequested_publish",
+      "what": "The model adds a publish step the user didn't ask for: it is left out.",
+      "turns": [{"message": "Create a Facebook sales campaign for SKU-TSHIRT-RED, 500 taka daily for 10 days in Bangladesh, link https://shop.example.com/tshirt",
+        "model_output": {"new_request": true, "summary": "Meta campaign", "ask": [], "actions": [
+          {"type": "create_meta_campaign_draft", "params": {"name": "Red T-Shirt", "objective": "sales", "skus": ["SKU-TSHIRT-RED"], "budget": 500, "duration_days": 10, "countries": ["BD"], "destination_url": "https://shop.example.com/tshirt"}, "description": "Draft the campaign", "depends_on": []},
+          {"type": "publish_meta_campaign", "params": {"campaign_id": "$1.campaign_id"}, "description": "Publish it", "depends_on": [1]}]}}],
+      "expect": {"kind": "plan", "actions": [{"type": "create_meta_campaign_draft"}], "dropped": ["not_requested"]}
+    },
+    {
+      "id": "meta_requested_publish",
+      "what": "The user asks to launch: the publish step stays (it waits for the owner's approval).",
+      "turns": [{"message": "Create a Facebook sales campaign for SKU-TSHIRT-RED, 500 taka daily for 10 days in Bangladesh, link https://shop.example.com/tshirt, and launch it",
+        "model_output": {"new_request": true, "summary": "Meta campaign", "ask": [], "actions": [
+          {"type": "create_meta_campaign_draft", "params": {"name": "Red T-Shirt", "objective": "sales", "skus": ["SKU-TSHIRT-RED"], "budget": 500, "duration_days": 10, "countries": ["BD"], "destination_url": "https://shop.example.com/tshirt"}, "description": "Draft the campaign", "depends_on": []},
+          {"type": "publish_meta_campaign", "params": {"campaign_id": "$1.campaign_id"}, "description": "Publish it", "depends_on": [1]}]}}],
+      "expect": {"kind": "plan", "actions": [{"type": "create_meta_campaign_draft"}, {"type": "publish_meta_campaign"}], "dropped": []}
+    },
+    {
+      "id": "meta_invented_optional",
+      "what": "Invented optional targeting (gender, age) is removed and listed; the defaults apply.",
+      "turns": [{"message": "Create a Facebook sales campaign for SKU-TSHIRT-RED, 500 daily for 10 days in BD, link https://shop.example.com/tshirt",
+        "model_output": {"new_request": true, "summary": "Meta campaign", "ask": [], "actions": [
+          {"type": "create_meta_campaign_draft", "params": {"name": "Red T-Shirt", "objective": "sales", "skus": ["SKU-TSHIRT-RED"], "budget": 500, "duration_days": 10, "countries": ["BD"], "destination_url": "https://shop.example.com/tshirt", "genders": "female", "age_min": 25}, "description": "Draft the campaign", "depends_on": []}]}}],
+      "expect": {"kind": "plan", "actions": [{"type": "create_meta_campaign_draft", "params": {"genders": "all", "age_min": 18}}], "left_out": ["genders", "age_min"]}
+    },
+    {
+      "id": "meta_multi_turn",
+      "what": "Values from the first message still count when the second message answers the question.",
+      "turns": [
+        {"message": "Create a Facebook sales campaign for SKU-CAP, 300 daily for 5 days, link https://shop.example.com/cap",
+          "model_output": {"new_request": true, "summary": "Meta campaign", "ask": ["countries"], "actions": [
+            {"type": "create_meta_campaign_draft", "params": {"name": "Caps", "objective": "sales", "skus": ["SKU-CAP"], "budget": 300, "duration_days": 5, "destination_url": "https://shop.example.com/cap"}, "description": "Draft the campaign", "depends_on": []}]}},
+        {"message": "Bangladesh",
+          "model_output": {"new_request": false, "summary": "Meta campaign", "ask": [], "actions": [
+            {"type": "create_meta_campaign_draft", "params": {"name": "Caps", "objective": "sales", "skus": ["SKU-CAP"], "budget": 300, "duration_days": 5, "countries": ["BD"], "destination_url": "https://shop.example.com/cap"}, "description": "Draft the campaign", "depends_on": []}]}}
+      ],
+      "expect": {"kind": "plan", "actions": [{"type": "create_meta_campaign_draft", "params": {"budget": 300, "duration_days": 5, "countries": ["BD"]}}]}
+    },
+    {
+      "id": "new_request_ignores_old_chain",
+      "what": "A different request after a question stands on its own words.",
+      "turns": [
+        {"message": "Create a Facebook sales campaign for SKU-CAP, 300 daily for 5 days, link https://shop.example.com/cap",
+          "model_output": {"new_request": true, "summary": "Meta campaign", "ask": ["countries"], "actions": [
+            {"type": "create_meta_campaign_draft", "params": {"name": "Caps", "objective": "sales", "skus": ["SKU-CAP"], "budget": 300, "duration_days": 5, "destination_url": "https://shop.example.com/cap"}, "description": "Draft the campaign", "depends_on": []}]}},
+        {"message": "Actually, make a Facebook campaign for SKU-MUG in Bangladesh",
+          "model_output": {"new_request": true, "summary": "Meta campaign", "ask": [], "actions": [
+            {"type": "create_meta_campaign_draft", "params": {"name": "Mugs", "objective": "sales", "skus": ["SKU-MUG"], "budget": 300, "duration_days": 5, "countries": ["BD"], "destination_url": "https://shop.example.com/cap"}, "description": "Draft the campaign", "depends_on": []}]}}
+      ],
+      "expect": {"kind": "clarification", "asks": ["budget", "duration days", "destination url"]}
+    },
+    {
+      "id": "organic_unrequested_schedule",
+      "what": "Writing posts is not a request to schedule them.",
+      "turns": [{"message": "Write 3 Instagram posts about our new mugs",
+        "model_output": {"new_request": true, "summary": "Posts", "ask": [], "actions": [
+          {"type": "create_organic_posts", "params": {"count": 3, "brief": "Our new mugs", "platforms": ["instagram"]}, "description": "Write 3 posts", "depends_on": []},
+          {"type": "schedule_organic_posts", "params": {"content_ids": "$1.content_ids", "time_local": "20:00"}, "description": "Schedule them", "depends_on": [1]}]}}],
+      "expect": {"kind": "plan", "actions": [{"type": "create_organic_posts", "params": {"count": 3}}], "dropped": ["not_requested"]}
+    },
+    {
+      "id": "organic_schedule_requested",
+      "what": "\"Tomorrow at 8 PM\" gives the company-local date and 20:00.",
+      "turns": [{"message": "Write 3 Instagram posts about our new mugs and schedule them tomorrow at 8 PM",
+        "model_output": {"new_request": true, "summary": "Posts", "ask": [], "actions": [
+          {"type": "create_organic_posts", "params": {"count": 3, "brief": "Our new mugs", "platforms": ["instagram"]}, "description": "Write 3 posts", "depends_on": []},
+          {"type": "schedule_organic_posts", "params": {"content_ids": "$1.content_ids", "time_local": "20:00", "start_date": "@date:+1"}, "description": "Schedule them", "depends_on": [1]}]}}],
+      "expect": {"kind": "plan", "actions": [{"type": "create_organic_posts"}, {"type": "schedule_organic_posts", "params": {"time_local": "20:00", "start_date": "@date:+1"}}], "dropped": []}
+    },
+    {
+      "id": "organic_invented_time",
+      "what": "No time given: the invented 20:00 becomes a question.",
+      "turns": [{"message": "Write 3 Instagram posts about mugs and schedule them for tomorrow",
+        "model_output": {"new_request": true, "summary": "Posts", "ask": [], "actions": [
+          {"type": "create_organic_posts", "params": {"count": 3, "brief": "Mugs", "platforms": ["instagram"]}, "description": "Write 3 posts", "depends_on": []},
+          {"type": "schedule_organic_posts", "params": {"content_ids": "$1.content_ids", "time_local": "20:00", "start_date": "@date:+1"}, "description": "Schedule them", "depends_on": [1]}]}}],
+      "expect": {"kind": "clarification", "asks": ["time local"]}
+    },
+    {
+      "id": "dependent_of_dropped_step",
+      "what": "An unrequested photo step is left out, and the post that needs its image is left out too.",
+      "turns": [{"message": "Write a Facebook post about our caps",
+        "model_output": {"new_request": true, "summary": "Post", "ask": [], "actions": [
+          {"type": "generate_photo", "params": {"prompt": "A baseball cap on a table"}, "description": "Make a photo", "depends_on": []},
+          {"type": "create_organic_post", "params": {"platforms": ["facebook"], "brief": "Our caps", "media_id": "$1.media_id"}, "description": "Write the post", "depends_on": [1]}]}}],
+      "expect": {"kind": "message", "dropped": ["not_requested", "depends_on_dropped"]}
+    },
+    {
+      "id": "pricing_invented_value",
+      "what": "\"Put it on sale\" without a number: the invented 20% becomes a question.",
+      "turns": [{"message": "Put SKU-MUG on sale",
+        "model_output": {"new_request": true, "summary": "Sale", "ask": [], "actions": [
+          {"type": "create_pricing_rule", "params": {"name": "Mug sale", "rule_type": "percent_discount", "value": 20, "skus": ["SKU-MUG"]}, "description": "20% off mugs", "depends_on": []}]}}],
+      "expect": {"kind": "clarification", "asks": ["value"]}
+    },
+    {
+      "id": "pricing_given_dates",
+      "what": "15% from tomorrow for 7 days: start = tomorrow, end = tomorrow + 6.",
+      "turns": [{"message": "Give 15% off on SKU-MUG from tomorrow for 7 days",
+        "model_output": {"new_request": true, "summary": "Sale", "ask": [], "actions": [
+          {"type": "create_pricing_rule", "params": {"name": "Mug sale", "rule_type": "percent_discount", "value": 15, "skus": ["SKU-MUG"], "start_date": "@date:+1", "end_date": "@date:+7"}, "description": "15% off mugs", "depends_on": []}]}}],
+      "expect": {"kind": "plan", "actions": [{"type": "create_pricing_rule", "params": {"value": 15, "start_date": "@date:+1", "end_date": "@date:+7"}}], "left_out": []}
+    },
+    {
+      "id": "pricing_invented_end_date",
+      "what": "An end date the user didn't give is removed and listed.",
+      "turns": [{"message": "Give 15% off on SKU-MUG",
+        "model_output": {"new_request": true, "summary": "Sale", "ask": [], "actions": [
+          {"type": "create_pricing_rule", "params": {"name": "Mug sale", "rule_type": "percent_discount", "value": 15, "skus": ["SKU-MUG"], "end_date": "@date:+30"}, "description": "15% off mugs", "depends_on": []}]}}],
+      "expect": {"kind": "plan", "actions": [{"type": "create_pricing_rule", "params": {"value": 15}}], "absent": [[1, "end_date"]], "left_out": ["end_date"]}
+    },
+    {
+      "id": "sku_case_normalized",
+      "what": "A SKU written in another case is rewritten to the stored spelling.",
+      "turns": [{"message": "Set the stock of sku-mug to 40",
+        "model_output": {"new_request": true, "summary": "Stock", "ask": [], "actions": [
+          {"type": "adjust_inventory", "params": {"sku": "sku-mug", "new_on_hand": 40}, "description": "Set mug stock to 40", "depends_on": []}]}}],
+      "expect": {"kind": "plan", "actions": [{"type": "adjust_inventory", "params": {"sku": "SKU-MUG", "new_on_hand": 40}}]}
+    },
+    {
+      "id": "unknown_sku",
+      "what": "A SKU the company doesn't have becomes a question.",
+      "turns": [{"message": "Set the stock of SKU-NOPE to 40",
+        "model_output": {"new_request": true, "summary": "Stock", "ask": [], "actions": [
+          {"type": "adjust_inventory", "params": {"sku": "SKU-NOPE", "new_on_hand": 40}, "description": "Set stock to 40", "depends_on": []}]}}],
+      "expect": {"kind": "clarification", "asks": ["sku"]}
+    },
+    {
+      "id": "bangla_stock",
+      "what": "Bengali digits and the Bengali word for stock.",
+      "turns": [{"message": "SKU-MUG এর স্টক ৪০ করো",
+        "model_output": {"new_request": true, "summary": "Stock", "ask": [], "actions": [
+          {"type": "adjust_inventory", "params": {"sku": "SKU-MUG", "new_on_hand": 40}, "description": "Set mug stock to 40", "depends_on": []}]}}],
+      "expect": {"kind": "plan", "actions": [{"type": "adjust_inventory", "params": {"new_on_hand": 40}}]}
+    },
+    {
+      "id": "invented_id",
+      "what": "An id that isn't in the context becomes a question.",
+      "turns": [{"message": "Pause the Summer Sale campaign",
+        "model_output": {"new_request": true, "summary": "Pause", "ask": [], "actions": [
+          {"type": "pause_meta", "params": {"level": "campaign", "object_id": "11111111-2222-3333-4444-555555555555"}, "description": "Pause it", "depends_on": []}]}}],
+      "expect": {"kind": "clarification", "asks": ["object id"]}
+    },
+    {
+      "id": "context_id",
+      "what": "An id from the context is kept.",
+      "turns": [{"message": "Pause the Summer Sale campaign",
+        "model_output": {"new_request": true, "summary": "Pause", "ask": [], "actions": [
+          {"type": "pause_meta", "params": {"level": "campaign", "object_id": "@campaign:Summer Sale"}, "description": "Pause it", "depends_on": []}]}}],
+      "expect": {"kind": "plan", "actions": [{"type": "pause_meta", "params": {"object_id": "@campaign:Summer Sale"}}]}
+    },
+    {
+      "id": "free_shipping_given",
+      "what": "Free shipping over 2000 taka in a zone from the context.",
+      "turns": [{"message": "Free shipping over 2000 taka in the Bangladesh zone",
+        "model_output": {"new_request": true, "summary": "Free shipping", "ask": [], "actions": [
+          {"type": "set_free_shipping_threshold", "params": {"zone_id": "@zone:Bangladesh", "threshold": 2000}, "description": "Free over 2000", "depends_on": []}]}}],
+      "expect": {"kind": "plan", "actions": [{"type": "set_free_shipping_threshold", "params": {"threshold": 2000}}]}
+    },
+    {
+      "id": "free_shipping_invented",
+      "what": "No amount given: the invented threshold becomes a question.",
+      "turns": [{"message": "Turn on free shipping in the Bangladesh zone",
+        "model_output": {"new_request": true, "summary": "Free shipping", "ask": [], "actions": [
+          {"type": "set_free_shipping_threshold", "params": {"zone_id": "@zone:Bangladesh", "threshold": 1500}, "description": "Free over 1500", "depends_on": []}]}}],
+      "expect": {"kind": "clarification", "asks": ["threshold"]}
+    },
+    {
+      "id": "free_pickup_rate",
+      "what": "\"Free\" supports a rate of 0.",
+      "turns": [{"message": "Add a free pickup method to the Bangladesh zone",
+        "model_output": {"new_request": true, "summary": "Pickup", "ask": [], "actions": [
+          {"type": "add_shipping_rate", "params": {"zone_id": "@zone:Bangladesh", "name": "Store pickup", "method_type": "local_pickup", "rate": 0}, "description": "Add free pickup", "depends_on": []}]}}],
+      "expect": {"kind": "plan", "actions": [{"type": "add_shipping_rate", "params": {"rate": 0}}]}
+    },
+    {
+      "id": "workflow_below_10",
+      "what": "\"Below 10\" is threshold 9 (the trigger fires at or below it).",
+      "turns": [{"message": "Create a workflow: when stock of any product goes below 10, notify me",
+        "model_output": {"new_request": true, "summary": "Low stock workflow", "ask": [], "actions": [
+          {"type": "create_workflow", "params": {"name": "Low stock alert", "trigger_type": "inventory_low", "trigger_config": {"threshold": 9}, "actions": [{"type": "notify_owner", "params": {"message": "Stock is low"}}]}, "description": "Create the workflow", "depends_on": []}]}}],
+      "expect": {"kind": "plan", "actions": [{"type": "create_workflow", "params": {"trigger_config": {"threshold": 9}}}]}
+    },
+    {
+      "id": "workflow_unrequested_enable",
+      "what": "The workflow is created disabled; an enable step nobody asked for is left out.",
+      "turns": [{"message": "Create a workflow: when stock of any product goes below 10, notify me",
+        "model_output": {"new_request": true, "summary": "Low stock workflow", "ask": [], "actions": [
+          {"type": "create_workflow", "params": {"name": "Low stock alert", "trigger_type": "inventory_low", "trigger_config": {"threshold": 9}, "actions": [{"type": "notify_owner", "params": {"message": "Stock is low"}}]}, "description": "Create the workflow", "depends_on": []},
+          {"type": "enable_workflow", "params": {"workflow_id": "$1.workflow_id"}, "description": "Turn it on", "depends_on": [1]}]}}],
+      "expect": {"kind": "plan", "actions": [{"type": "create_workflow"}], "dropped": ["not_requested"]}
+    },
+    {
+      "id": "workflow_invented_threshold",
+      "what": "\"When stock is low\" without a number: the invented threshold becomes a question.",
+      "turns": [{"message": "Create a workflow that notifies me when stock is low",
+        "model_output": {"new_request": true, "summary": "Low stock workflow", "ask": [], "actions": [
+          {"type": "create_workflow", "params": {"name": "Low stock alert", "trigger_type": "inventory_low", "trigger_config": {"threshold": 5}, "actions": [{"type": "notify_owner", "params": {"message": "Stock is low"}}]}, "description": "Create the workflow", "depends_on": []}]}}],
+      "expect": {"kind": "clarification", "asks": ["threshold"]}
+    },
+    {
+      "id": "ai_campaign_invented",
+      "what": "Create with AI from chat: an invented budget and landing page become questions.",
+      "turns": [{"message": "Create an AI campaign on Meta for our mugs",
+        "model_output": {"new_request": true, "summary": "AI campaign", "ask": [], "actions": [
+          {"type": "create_ai_campaign", "params": {"prompt": "Promote our ceramic mugs", "platforms": ["meta"], "budget": 100, "landing_url": "https://shop.example.com/mugs"}, "description": "Start the AI campaign", "depends_on": []}]}}],
+      "expect": {"kind": "clarification", "asks": ["budget", "landing url"]}
+    },
+    {
+      "id": "ai_campaign_given",
+      "what": "Create with AI from chat with the budget and landing page given.",
+      "turns": [{"message": "Create an AI campaign on Meta for our mugs with a total budget of 3000, landing page https://shop.example.com/mugs",
+        "model_output": {"new_request": true, "summary": "AI campaign", "ask": [], "actions": [
+          {"type": "create_ai_campaign", "params": {"prompt": "Promote our ceramic mugs", "platforms": ["meta"], "budget": 3000, "budget_mode": "total", "landing_url": "https://shop.example.com/mugs"}, "description": "Start the AI campaign", "depends_on": []}]}}],
+      "expect": {"kind": "plan", "actions": [{"type": "create_ai_campaign", "params": {"budget": "3000", "landing_url": "https://shop.example.com/mugs"}}]}
+    },
+    {
+      "id": "webhook_invented_url",
+      "what": "An invented webhook URL becomes a question.",
+      "turns": [{"message": "Send new orders to my webhook",
+        "model_output": {"new_request": true, "summary": "Webhook", "ask": [], "actions": [
+          {"type": "call_webhook", "params": {"url": "https://hooks.example.com/orders", "event": "order_placed"}, "description": "Call the webhook", "depends_on": []}]}}],
+      "expect": {"kind": "clarification", "asks": ["url"]}
+    },
+    {
+      "id": "read_question",
+      "what": "A read-only question runs at once (reads are never scope-checked).",
+      "turns": [{"message": "How are my mugs doing?",
+        "model_output": {"new_request": true, "summary": "Mugs", "ask": [], "actions": [
+          {"type": "inspect_products", "params": {"query": "mug"}, "description": "Look up mugs", "depends_on": []}]}}],
+      "expect": {"kind": "plan", "actions": [{"type": "inspect_products"}]}
+    },
+    {
+      "id": "retry_unknown_action",
+      "modes": ["stub"],
+      "what": "An unknown action type is answered once more with the problem listed.",
+      "turns": [{"message": "Show me low stock products",
+        "model_output": [
+          {"new_request": true, "summary": "Stock", "ask": [], "actions": [{"type": "show_low_stock", "params": {}, "description": "Show", "depends_on": []}]},
+          {"new_request": true, "summary": "Stock", "ask": [], "actions": [{"type": "inspect_products", "params": {"low_stock_only": true}, "description": "Low stock products", "depends_on": []}]}]}],
+      "expect": {"kind": "plan", "actions": [{"type": "inspect_products", "params": {"low_stock_only": true}}], "llm_calls": 2}
+    },
+    {
+      "id": "retry_unparseable",
+      "modes": ["stub"],
+      "what": "An answer that isn't JSON is answered once more.",
+      "turns": [{"message": "Show me low stock products",
+        "model_output": [
+          "Sure! I'll show you the low stock products.",
+          {"new_request": true, "summary": "Stock", "ask": [], "actions": [{"type": "inspect_products", "params": {"low_stock_only": true}, "description": "Low stock products", "depends_on": []}]}]}],
+      "expect": {"kind": "plan", "actions": [{"type": "inspect_products"}], "llm_calls": 2}
+    }
+  ]
+}

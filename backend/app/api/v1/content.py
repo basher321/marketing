@@ -23,8 +23,12 @@ router = APIRouter(prefix="/content", tags=["content"])
 
 @router.post("/generate", response_model=ContentGenerateResponse)
 # SPEC-BE-071 F5: legacy AI text generation spends AI credits -> manager and up.
-def generate(payload: ContentGenerateRequest, current_user: User = Depends(require_permission("manager"))):
-    text = content_service.generate_content(payload.prompt)
+def generate(
+    payload: ContentGenerateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("manager")),
+):
+    text = content_service.generate_content(db, str(current_user.tenant_id), payload.prompt)
     return ContentGenerateResponse(content=text)
 
 

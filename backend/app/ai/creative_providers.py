@@ -559,8 +559,115 @@ class MCPProvider:
             raise ProviderFailed(exc.message) from None
 
 
-BUILT_IN: dict[str, Any] = {p.key: p for p in (LLMProvider(), OpenAIImageProvider(), GeminiImageProvider(), CatalogImageProvider(),
+# ---------------------------------------------------------------------------
+# OpenAI slideshow video (SPEC-BE-093). OpenAI shut down its Sora Videos API
+# on 2026-09-24 and has no other video model, so Command Chat's OpenAI video
+# is a slideshow: n images from the company's OpenAI image model, each with a
+# slow zoom, joined with 0.5 s crossfades by the bundled ffmpeg
+# (imageio-ffmpeg). Synchronous: start() returns the finished result. Not
+# real motion video, and the summary says so.
+# ---------------------------------------------------------------------------
+class OpenAISlideshowProvider:
+    key = "openai_slideshow"
+    kinds = {"video"}
+    MIN_S, MAX_S = 4, 30
+    FPS = 30
+    FADE_S = 0.5
+    # output size, and the OpenAI image ratio the frames are made at
+    SHAPES = {"9:16": ((720, 1280), "2:3"), "16:9": ((1280, 720), "3:2"), "1:1": ((1080, 1080), "1:1")}
+    SHOTS = ("wide establishing shot", "close-up detail shot", "the same subject from a different angle",
+             "lifestyle shot of it in use", "dramatic hero shot with soft background blur", "final shot, clean composition")
+
+    def available(self, db: Session, tenant_id: str) -> bool:
+        return bool(_saved_key(db, tenant_id, "openai") and _image_model(db, tenant_id, "openai"))
+
+    def supported(self, req: CreativeRequest) -> dict[str, Any]:
+        seconds = min(self.MAX_S, max(self.MIN_S, int(req.duration_s or 8)))
+        ratio = req.aspect_ratio if req.aspect_ratio in self.SHAPES else "1:1"
+        return {"duration_s": seconds, "aspect_ratio": ratio}
+
+    def frames(self, seconds: int) -> int:
+        return min(6, max(2, -(-seconds // 3)))
+
+    def start(self, db: Session, tenant_id: str, req: CreativeRequest) -> str | CreativeResult:
+        return self.generate(db, tenant_id, req)
+
+    def poll(self, db: Session, tenant_id: str, ref: str) -> CreativeResult | None:
+        raise ProviderFailed("the slideshow finishes when it starts")
+
+    def generate(self, db: Session, tenant_id: str, req: CreativeRequest) -> CreativeResult:
+        eff = self.supported(req)
+        seconds, (size, image_ratio) = eff["duration_s"], self.SHAPES[eff["aspect_ratio"]]
+        n = self.frames(seconds)
+        images: list[bytes] = []
+        model, cost = "", 0
+        for i in range(n):
+            prompt = f"{req.prompt} — {self.SHOTS[i % len(self.SHOTS)]}." + (f" Style: {req.style}." if req.style else "")
+            shot = OPENAI_IMAGE.generate(db, tenant_id, CreativeRequest(kind="image", prompt=prompt, aspect_ratio=image_ratio,
+                                                                         reference_images=req.reference_images))
+            images.append(shot.image or b"")
+            model, cost = shot.model, cost + shot.cost_cents
+        data = self._encode(images, size, seconds)
+        result = _video_result(self.key, f"{model} slideshow ({n} images)", data, 0)
+        result.width, result.height, result.cost_cents = size[0], size[1], cost
+        return result
+
+    def _encode(self, images: list[bytes], size: tuple[int, int], seconds: int) -> bytes:
+        import subprocess
+        import tempfile
+        from pathlib import Path
+
+        try:
+            import imageio_ffmpeg  # type: ignore[import-untyped]  # no stubs published
+
+            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+        except (ImportError, RuntimeError) as exc:
+            raise ProviderFailed(f"ffmpeg isn't available ({exc})") from None
+        w, h = size
+        n = len(images)
+        seg = (seconds + (n - 1) * self.FADE_S) / n  # each clip, so the crossfaded total = seconds
+        frames = round(seg * self.FPS)
+        with tempfile.TemporaryDirectory() as tmp:
+            args = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
+            for i, img in enumerate(images):
+                path = Path(tmp) / f"f{i}.img"
+                path.write_bytes(img)
+                args += ["-i", str(path)]
+            parts = []
+            for i in range(n):
+                # Upscale 2x before zoompan so the slow zoom doesn't judder; odd clips drift sideways.
+                x = "iw/2-(iw/zoom/2)" if i % 2 == 0 else f"(iw-iw/zoom)*on/{frames}"
+                parts.append(f"[{i}:v]scale={2 * w}:{2 * h}:force_original_aspect_ratio=increase,crop={2 * w}:{2 * h},"
+                             f"zoompan=z='min(zoom+0.0010,1.15)':x='{x}':y='ih/2-(ih/zoom/2)':d={frames}:s={w}x{h}:fps={self.FPS},"
+                             f"setsar=1,format=yuv420p[v{i}]")
+            last = "v0"
+            for i in range(1, n):
+                offset = i * (seg - self.FADE_S)
+                parts.append(f"[{last}][v{i}]xfade=transition=fade:duration={self.FADE_S}:offset={offset:.3f}[x{i}]")
+                last = f"x{i}"
+            out = Path(tmp) / "out.mp4"
+            args += ["-filter_complex", ";".join(parts), "-map", f"[{last}]", "-t", str(seconds), "-r", str(self.FPS),
+                     "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an", str(out)]
+            try:
+                done = subprocess.run(args, capture_output=True, timeout=300, check=False)  # noqa: S603 - fixed binary, no shell
+            except subprocess.TimeoutExpired:
+                raise ProviderFailed("ffmpeg timed out after 5 minutes") from None
+            if done.returncode != 0 or not out.exists():
+                raise ProviderFailed(f"ffmpeg failed: {short(done.stderr.decode(errors='replace'), 200)}")
+            return out.read_bytes()
+
+
+OPENAI_IMAGE = OpenAIImageProvider()
+BUILT_IN: dict[str, Any] = {p.key: p for p in (LLMProvider(), OPENAI_IMAGE, GeminiImageProvider(), CatalogImageProvider(),
                                                 GeminiVideoProvider(), OpenAIVideoProvider())}
+# Providers only Command Chat pins (SPEC-BE-093): not in the creative order
+# setting, readiness lists or the Organic pages.
+CHAT_ONLY: dict[str, Any] = {p.key: p for p in (OpenAISlideshowProvider(),)}
+
+
+def provider(key: str) -> Any:
+    """A built-in or chat-only provider by key (None if unknown)."""
+    return BUILT_IN.get(key) or CHAT_ONLY.get(key)
 
 
 # ---------------------------------------------------------------------------

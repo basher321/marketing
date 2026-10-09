@@ -66,6 +66,13 @@ def _key(entry: dict[str, Any]) -> str | None:
         return None
 
 
+def _usable_key(spec: llm_providers.ProviderSpec, entry: dict[str, Any]) -> str | None:
+    """The saved key; "" for a provider that takes none (Ollama); None when a
+    needed key is missing (SPEC-BE-088)."""
+    key = _key(entry)
+    return key if key is not None else (None if spec.needs_key else "")
+
+
 def _priority(config: dict[str, dict[str, Any]], provider: str) -> int:
     default = [p.provider for p in llm_providers.PROVIDERS].index(provider)
     return int(config.get(provider, {}).get("priority", default))
@@ -85,7 +92,7 @@ def list_providers(db: Session, tenant_id: str) -> dict[str, Any]:
             {
                 "provider": spec.provider,
                 "label": spec.label,
-                "enabled": bool(entry.get("enabled")) and key is not None and bool(entry.get("model")),
+                "enabled": bool(entry.get("enabled")) and _usable_key(spec, entry) is not None and bool(entry.get("model")),
                 "model": entry.get("model") or None,
                 "image_model": entry.get("image_model") or None,
                 "has_images": bool(spec.prefer_image),
@@ -96,6 +103,7 @@ def list_providers(db: Session, tenant_id: str) -> dict[str, Any]:
                 "last_error": entry.get("last_error"),
                 "last_ok_at": _ts(entry.get("last_ok_at")),
                 "docs_url": spec.docs_url,
+                "needs_key": spec.needs_key,
             }
         )
     items.sort(key=lambda i: int(i["priority"]))
@@ -133,12 +141,12 @@ def update_provider(
             raise AppError(f"{spec.label} has no video models.", 422)
         entry["video_model"] = (payload.video_model or "").strip() or None
     if "enabled" in sent and payload.enabled is not None:
-        if payload.enabled and not _key(entry):
+        if payload.enabled and _usable_key(spec, entry) is None:
             raise AppError("Add an API key before enabling this model.", 422)
         if payload.enabled and not entry.get("model"):
             raise AppError("Choose a model before enabling.", 422)
         entry["enabled"] = payload.enabled
-    elif "enabled" not in entry and _key(entry) and entry.get("model"):
+    elif "enabled" not in entry and _usable_key(spec, entry) is not None and entry.get("model"):
         entry["enabled"] = True  # turns on the first time it has a key and a model
     config[provider] = entry
     _save(tenant, config)
@@ -202,8 +210,8 @@ def test_provider(db: Session, tenant_id: str, actor_user_id: str, provider: str
     tenant = _tenant(db, tenant_id)
     config = _config(tenant)
     entry = config.get(provider, {})
-    key = _key(entry)
-    if not key:
+    key = _usable_key(spec, entry)
+    if key is None:
         raise AppError("Save an API key first.", 409)
     model = entry.get("model")
     if not model:
@@ -249,8 +257,8 @@ def list_models(db: Session, tenant_id: str, provider: str) -> dict[str, Any]:
     """The provider's live model list for the saved key (a read: nothing is
     stored or audited). A provider error is returned in `error`."""
     spec = _spec(provider)
-    key = _key(_config(_tenant(db, tenant_id)).get(provider, {}))
-    if not key:
+    key = _usable_key(spec, _config(_tenant(db, tenant_id)).get(provider, {}))
+    if key is None:
         raise AppError("Save an API key first.", 409)
     try:
         models = llm_providers.list_models(provider, key, LIST_TIMEOUT_S)
@@ -276,8 +284,8 @@ def resolve_chain(db: Session, tenant_id: str) -> list[tuple[str, str, str]]:
     chain = []
     for spec in sorted(llm_providers.PROVIDERS, key=lambda s: _priority(config, s.provider)):
         entry = config.get(spec.provider, {})
-        key = _key(entry)
-        if entry.get("enabled") and key and entry.get("model"):
+        key = _usable_key(spec, entry)
+        if entry.get("enabled") and key is not None and entry.get("model"):
             chain.append((spec.provider, key, entry["model"]))
     return chain
 

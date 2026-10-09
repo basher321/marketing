@@ -1,0 +1,52 @@
+{
+  "about": "AI customer-service reply golden set (SPEC-BE-086 FR2). The knowledge below is seeded into a temporary company; each case is one customer message with a reference answer written only from that knowledge and the keys of the sources that answer it ([] = the knowledge doesn't answer it). Grow it with real customer questions.",
+  "knowledge": {
+    "faqs": [
+      {"key": "F_delivery_time", "question": "How long does delivery take?", "answer": "Inside Dhaka delivery takes 1-2 working days. Outside Dhaka it takes 3-5 working days."},
+      {"key": "F_cod", "question": "Do you offer cash on delivery?", "answer": "Yes. Cash on delivery is available everywhere in Bangladesh for orders up to 10,000 taka."},
+      {"key": "F_payment_methods", "question": "Which payment methods do you accept?", "answer": "We accept bKash, Nagad, Visa and Mastercard cards, and cash on delivery."},
+      {"key": "F_tracking", "question": "How can I track my order?", "answer": "We send a tracking link by SMS as soon as your order ships. You can also follow it under My Orders in your account."},
+      {"key": "F_support_hours", "question": "What are your customer support hours?", "answer": "Support is open Saturday to Thursday, 10 AM to 8 PM. We are closed on Fridays."},
+      {"key": "F_size_exchange", "question": "Can I exchange an item for a different size?", "answer": "Yes. You get one free size exchange within 7 days of delivery, as long as the tags are still attached."}
+    ],
+    "policies": [
+      {"key": "P_returns", "policy_type": "returns", "title": "Return policy", "body": "You can return unused items within 14 days of delivery for a refund. Items must be in their original packaging. Underwear and opened cosmetics cannot be returned. Return shipping is free inside Dhaka and costs 120 taka outside Dhaka."},
+      {"key": "P_refunds", "policy_type": "refunds", "title": "Refund policy", "body": "Refunds go back to the original payment method within 7 working days after we receive the returned item. Cash on delivery orders are refunded by bKash."},
+      {"key": "P_warranty", "policy_type": "warranty", "title": "Electronics warranty", "body": "Electronics come with a 1-year manufacturer warranty that covers defects. It does not cover physical or water damage. Keep your invoice to make a claim."},
+      {"key": "P_shipping", "policy_type": "shipping", "title": "Shipping charges", "body": "Delivery costs 60 taka inside Dhaka and 120 taka outside Dhaka. Orders over 2,000 taka ship free."}
+    ]
+  },
+  "cases": [
+    {"id": "delivery_time_city", "kind": "shared_words", "question": "How long does delivery take to Chittagong?",
+     "reference": "Chittagong is outside Dhaka, so delivery takes 3-5 working days.", "sources": ["F_delivery_time"]},
+    {"id": "cod", "kind": "shared_words", "question": "Can I pay cash on delivery?",
+     "reference": "Yes, cash on delivery is available everywhere in Bangladesh for orders up to 10,000 taka.", "sources": ["F_cod"]},
+    {"id": "shipping_charge_dhaka", "kind": "shared_words", "question": "What is the shipping charge inside Dhaka?",
+     "reference": "Delivery inside Dhaka costs 60 taka, and orders over 2,000 taka ship free.", "sources": ["P_shipping"]},
+    {"id": "return_window", "kind": "shared_words", "question": "How many days do I have to return an item?",
+     "reference": "Unused items can be returned within 14 days of delivery, in their original packaging.", "sources": ["P_returns"]},
+    {"id": "refund_timing", "kind": "shared_words", "question": "When will I get my refund?",
+     "reference": "The refund goes back to the original payment method within 7 working days after the returned item is received.", "sources": ["P_refunds"]},
+    {"id": "bkash", "kind": "shared_words", "question": "Do you accept bKash?",
+     "reference": "Yes, bKash is accepted, along with Nagad, Visa and Mastercard cards, and cash on delivery.", "sources": ["F_payment_methods"]},
+    {"id": "free_shipping_amount", "kind": "shared_words", "question": "How much is shipping if my order is 2500 taka?",
+     "reference": "Shipping is free, because orders over 2,000 taka ship free.", "sources": ["P_shipping"]},
+    {"id": "parcel_where", "kind": "paraphrase", "question": "My parcel hasn't arrived yet. Where can I see where it is?",
+     "reference": "A tracking link is sent by SMS when the order ships, and the order can also be followed under My Orders.", "sources": ["F_tracking"]},
+    {"id": "shirt_too_small", "kind": "paraphrase", "question": "The shirt is too small, can I swap it?",
+     "reference": "Yes, one free size exchange is allowed within 7 days of delivery if the tags are still attached.", "sources": ["F_size_exchange"]},
+    {"id": "headphones_broken", "kind": "paraphrase", "question": "My headphones stopped working after 3 months. What can you do?",
+     "reference": "Electronics have a 1-year manufacturer warranty covering defects (not physical or water damage), so it can be claimed with the invoice.", "sources": ["P_warranty"]},
+    {"id": "open_friday", "kind": "paraphrase", "question": "Is anyone around to help on Friday?",
+     "reference": "No, support is closed on Fridays. It is open Saturday to Thursday, 10 AM to 8 PM.", "sources": ["F_support_hours"]},
+    {"id": "paypal", "kind": "inference", "question": "Can I pay with PayPal?",
+     "reference": "PayPal is not among the accepted payment methods; the accepted ones are bKash, Nagad, Visa and Mastercard cards, and cash on delivery.", "sources": ["F_payment_methods"]},
+    {"id": "shop_sylhet", "kind": "not_in_knowledge", "question": "Do you have a physical shop in Sylhet?",
+     "reference": "The knowledge base has no information about physical shops, so the reply should not claim one exists and should hand over to the team.", "sources": []},
+    {"id": "ship_india", "kind": "not_in_knowledge", "question": "Do you ship to India?",
+     "reference": "The knowledge base only covers delivery inside Bangladesh and says nothing about India, so the reply should not promise it and should hand over to the team.", "sources": []},
+    {"id": "bangla_shipping", "kind": "bengali", "question": "ঢাকার ভেতরে ডেলিভারি চার্জ কত?",
+     "reference": "Delivery inside Dhaka costs 60 taka.", "sources": ["P_shipping"],
+     "reply_script": "bengali"}
+  ]
+}

@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { setupShipping, shippingKeys, validateShippingSetup } from "@/lib/api/shipping";
-import { ApiError } from "@/lib/types/common";
+import { ApiError, isRoleDenied } from "@/lib/types/common";
 import type { MethodType, ShippingSetup, ValidationResult } from "@/lib/types/shipping";
 
 type MethodDraft = {
@@ -76,7 +76,7 @@ function toPayload(zones: ZoneDraft[], push: boolean): ShippingSetup {
 
 function errText(err: Error): string {
   if (err instanceof ApiError) {
-    if (err.status === 403) return "Only managers and above can set up shipping.";
+    if (isRoleDenied(err)) return "Only managers and above can set up shipping.";
     const detail = (err.body as { detail?: unknown } | undefined)?.detail;
     if (Array.isArray(detail)) return detail.map((d: { msg?: string }) => (d.msg ?? "").replace(/^Value error, /, "")).join(" ");
   }

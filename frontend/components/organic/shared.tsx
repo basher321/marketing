@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { fetchLocaleOptions, fetchTenant, tenantKeys } from "@/lib/api/tenant";
-import { ApiError } from "@/lib/types/common";
+import { ApiError, isRoleDenied } from "@/lib/types/common";
 import type { PostStatus } from "@/lib/types/organic";
 import { PLATFORM_LABEL, type SocialPlatform } from "@/lib/types/social";
 
@@ -85,7 +85,7 @@ export function PlatformTag({ platform }: { platform: SocialPlatform | string })
 /** The backend's own message; 403 in plain words (the client doesn't know the user's role). */
 export function errorText(err: unknown, forbidden = "Your role can't do this; ask a manager or the owner."): string {
   if (err instanceof ApiError) {
-    if (err.status === 403) return forbidden;
+    if (isRoleDenied(err)) return forbidden;
     const detail = (err.body as { detail?: unknown } | undefined)?.detail;
     if (Array.isArray(detail)) {
       return detail

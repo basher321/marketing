@@ -77,6 +77,7 @@ class LLMClient:
         user_prompt: str,
         max_tokens: int,
         timeout_s: float,
+        temperature: float | None = None,
     ) -> LLMCompletion:
         # Try each enabled provider in order; any failure (error, timeout, 429,
         # 5xx, bad key) moves on to the next. The span records every attempt.
@@ -88,7 +89,7 @@ class LLMClient:
         for provider, api_key, model in chain:
             try:
                 text, input_tokens, output_tokens = llm_providers.call(
-                    provider, api_key, model, system_prompt, user_prompt, max_tokens, timeout_s
+                    provider, api_key, model, system_prompt, user_prompt, max_tokens, timeout_s, temperature
                 )
             except llm_providers.ProviderCallError as exc:
                 attempts.append({"provider": provider, "error": str(exc)[:200]})
@@ -165,18 +166,21 @@ class LLMClient:
         *,
         db: Optional["Session"] = None,
         tenant_id: Optional[str] = None,
+        temperature: float | None = None,
     ) -> LLMCompletion:
         # 1) The company's AI models in fallback order (SPEC-BE-053); if all
         #    fail, LLMProviderError names each failure.
         # 2) Otherwise the .env provider, unchanged. No mock fallback here: a
         #    failing or timed-out provider raises LLMProviderError so callers
         #    never mistake a mock for a real answer.
+        # `temperature` is sent only when given (SPEC-BE-085: 0 for the Command
+        # Chat planner); a model that refuses it is asked once more without it.
         if self.provider == "fixture":
             return self._complete_fixture(user_prompt)
         chain = self._tenant_chain(db, tenant_id)
         if chain and tenant_id:
             return self._complete_chain(
-                chain, str(tenant_id), system_prompt, user_prompt, max_tokens, timeout_s
+                chain, str(tenant_id), system_prompt, user_prompt, max_tokens, timeout_s, temperature
             )
         api_key = self._real_api_key()
         started = time.perf_counter()
@@ -194,9 +198,16 @@ class LLMClient:
 
         call = self._complete_anthropic if self.provider == "anthropic" else self._complete_openai
         try:
-            text, input_tokens, output_tokens = call(
-                system_prompt, user_prompt, max_tokens, api_key, timeout_s
-            )
+            try:
+                text, input_tokens, output_tokens = call(
+                    system_prompt, user_prompt, max_tokens, api_key, timeout_s, temperature
+                )
+            except Exception as exc:
+                if temperature is None or "temperature" not in str(exc).lower():
+                    raise
+                text, input_tokens, output_tokens = call(
+                    system_prompt, user_prompt, max_tokens, api_key, timeout_s, None
+                )
         except Exception as exc:
             logger.warning(
                 "llm_call",
@@ -240,15 +251,18 @@ class LLMClient:
         max_tokens: int,
         api_key: str,
         timeout_s: float = DEFAULT_TIMEOUT_S,
+        temperature: float | None = None,
     ) -> tuple[str, int, int]:
         import anthropic
 
         client = anthropic.Anthropic(api_key=api_key, timeout=timeout_s)
+        extra = {} if temperature is None else {"temperature": temperature}
         response = client.messages.create(
             model=self.model,
             max_tokens=max_tokens,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
+            **extra,
         )
         text = "".join(block.text for block in response.content if hasattr(block, "text"))
         return text, response.usage.input_tokens, response.usage.output_tokens
@@ -260,10 +274,12 @@ class LLMClient:
         max_tokens: int,
         api_key: str,
         timeout_s: float = DEFAULT_TIMEOUT_S,
+        temperature: float | None = None,
     ) -> tuple[str, int, int]:
         from openai import OpenAI
 
         client = OpenAI(api_key=api_key, timeout=timeout_s)
+        extra = {} if temperature is None else {"temperature": temperature}
         response = client.chat.completions.create(
             model=self.model,
             max_tokens=max_tokens,
@@ -271,6 +287,7 @@ class LLMClient:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
+            **extra,
         )
         usage = response.usage
         return (

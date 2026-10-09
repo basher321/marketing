@@ -11,6 +11,7 @@ network. Fake objects live in memory for the life of the process.
 """
 import itertools
 import json
+import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import parse_qs
@@ -674,10 +675,45 @@ def _video_left(job: str) -> int:
     return left
 
 
+def fake_embedding(text: str, dims: int) -> list[float]:
+    """SPEC-BE-087: a deterministic hashed bag-of-words vector. Texts that
+    share words are similar; it is not semantic (tests only)."""
+    import hashlib
+
+    vector = [0.0] * dims
+    for word in re.findall(r"\w+", text.lower()):
+        word = word[:-1] if len(word) > 3 and word.endswith("s") else word
+        digest = hashlib.sha256(word.encode("utf-8")).digest()
+        vector[int.from_bytes(digest[:4], "big") % dims] += 1.0 if digest[4] % 2 else -1.0
+    return vector
+
+
+def _embedding_api(request: httpx.Request, path: str) -> httpx.Response:
+    """SPEC-BE-087: Voyage (/v1/embeddings), Mistral (/v1/embeddings, 1024
+    dims) and Cohere (/v2/embed) embedding fakes."""
+    body = _body(request) or {}
+    host = request.url.host or ""
+    if host == "api.cohere.com" and path == "/v2/embed":
+        dims = int(body.get("output_dimension") or 1536)
+        return _json({"id": "fake", "embeddings": {"float": [fake_embedding(str(t), dims) for t in body.get("texts") or []]}})
+    if path == "/v1/embeddings":
+        dims = 1024 if host == "api.mistral.ai" else int(body.get("output_dimension") or 1024)
+        raw = body.get("input")
+        texts: list[Any] = raw if isinstance(raw, list) else [raw or ""]
+        return _json({"data": [{"index": i, "embedding": fake_embedding(str(t), dims)} for i, t in enumerate(texts)]})
+    return _json({"error": {"message": f"Fake embeddings API: unknown path {path}"}}, 404)
+
+
 def _openai(request: httpx.Request, path: str) -> httpx.Response:
-    """Sora (/v1/videos) and image generation/edit fakes."""
+    """Sora (/v1/videos), image generation/edit and embeddings fakes."""
     import base64
 
+    if path == "/v1/embeddings":
+        body = _body(request) or {}
+        dims = int(body.get("dimensions") or 768)
+        raw = body.get("input")
+        texts: list[Any] = raw if isinstance(raw, list) else [raw or ""]
+        return _json({"data": [{"index": i, "embedding": fake_embedding(str(t), dims)} for i, t in enumerate(texts)]})
     if path == "/v1/videos" and request.method == "POST":
         jid = f"video_fake{_new_id()}"
         _video_jobs[jid] = VIDEO_POLLS
@@ -693,7 +729,14 @@ def _openai(request: httpx.Request, path: str) -> httpx.Response:
 
 
 def _gemini(request: httpx.Request, path: str) -> httpx.Response:
-    """Gemini image generation (SPEC-BE-070) and Veo video (SPEC-BE-077)."""
+    """Gemini image generation (SPEC-BE-070), Veo video (SPEC-BE-077) and
+    embeddings (SPEC-BE-087)."""
+    if path.endswith(":batchEmbedContents"):
+        reqs = (_body(request) or {}).get("requests") or []
+        return _json({"embeddings": [
+            {"values": fake_embedding(" ".join(p.get("text", "") for p in (r.get("content") or {}).get("parts") or []),
+                                      int(r.get("outputDimensionality") or 768))}
+            for r in reqs]})
     if path.endswith(":predictLongRunning"):
         op = f"models/veo-fake/operations/{_new_id()}"
         _video_jobs[op] = VIDEO_POLLS
@@ -1152,6 +1195,8 @@ _AD_HOSTS = (
     ("api.social-api.ai", "socialapi", _socialapi),
     ("generativelanguage.googleapis.com", "gemini", _gemini),
     ("api.openai.com", "openai", _openai),
+    ("api.voyageai.com", "voyage", _embedding_api), ("api.mistral.ai", "mistral", _embedding_api),
+    ("api.cohere.com", "cohere", _embedding_api),
     ("open.tiktokapis.com", "tiktok_organic", _tiktok_organic), ("open-upload.tiktokapis.com", "tiktok_organic", _tiktok_organic),
     ("example.com", "example", _example_page), ("shop.example.com", "example", _example_page), ("www.example.com", "example", _example_page),
     ("business-api.tiktok.com", "tiktok", _tiktok), ("googleads.googleapis.com", "google", _google), ("oauth2.googleapis.com", "google", _google),
@@ -1172,6 +1217,9 @@ _FAIL_ANSWER = {
     "tiktok_organic": lambda: _json({"data": {}, "error": {"code": "spam_risk_too_many_posts", "message": "Fake TikTok: rejected by the injected failure"}}, 403),
     "openai": lambda: _json({"error": {"message": "Fake OpenAI: rejected by the injected failure"}}, 400),
     "gemini": lambda: _json({"error": {"message": "Fake Gemini: rejected by the injected failure"}}, 400),
+    "voyage": lambda: _json({"detail": "Fake Voyage: rejected by the injected failure"}, 400),
+    "mistral": lambda: _json({"message": "Fake Mistral: rejected by the injected failure"}, 400),
+    "cohere": lambda: _json({"message": "Fake Cohere: rejected by the injected failure"}, 400),
     "socialapi": lambda: _json({"error": {"code": "validation.failed", "message": "Fake SocialAPI: rejected by the injected failure"}}, 400),
     "zernio": lambda: _json({"error": "Fake Zernio: rejected by the injected failure", "type": "invalid_request_error"}, 400),
 }
@@ -1221,6 +1269,7 @@ def _handler(request: httpx.Request) -> httpx.Response:
 def install() -> None:
     """Swaps the HTTP client factories (and the SSRF DNS check, which would
     otherwise resolve fake hosts) for the in-process fixtures."""
+    from app.ai import embeddings
     from app.integrations import base_adapter, meta_ads, verify
 
     def factory() -> httpx.Client:
@@ -1229,5 +1278,6 @@ def install() -> None:
     meta_ads.client_factory = factory
     verify.client_factory = factory
     base_adapter.client_factory = factory  # every ad platform adapter
+    embeddings.client_factory = factory  # SPEC-BE-087 knowledge embeddings
     verify._require_public_host = lambda host: None
     logger.warning("dev_fake_transport_enabled", note="Meta/Shopify/WooCommerce and ad platform calls are answered by fixtures")

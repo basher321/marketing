@@ -198,3 +198,15 @@ New section **Social sign-in**:
 New section **Zernio paid ads**:
 - `ZERNIO_API_KEY` (SecretStr, default `""`): the one server-wide Zernio key used for every company. While it is empty, every `/zernio/*` route answers 503 and the app still boots. It is never logged or returned.
 - `ZERNIO_BASE_URL` (default `https://zernio.com/api/v1`).
+
+## Amendment (SPEC-BE-087, 2026-10-09): embeddings for AI reply retrieval
+New section **Embeddings for AI reply retrieval** (one platform key for every company):
+- `EMBEDDINGS_PROVIDER` (`Literal["none", "openai", "gemini"]`, default `none`). With `none` or an empty key, retrieval is the full-text search only, and the app always boots.
+- `EMBEDDINGS_API_KEY` (SecretStr, default `""`). It is never logged or returned.
+- `EMBEDDINGS_MODEL` (default `""` = `text-embedding-3-small` / `gemini-embedding-001`).
+- `EMBEDDINGS_DIMENSIONS` (int, default 768, 64–3072).
+- (Same day, any-key amendment) `EMBEDDINGS_PROVIDER` is now `Literal["auto", "none", "openai", "gemini", "voyage", "mistral", "cohere", "openai_compatible"]`, default `auto` (the key is recognised by its prefix; an empty key tries `LLM_API_KEY`; Claude/Groq keys mean off). New `EMBEDDINGS_BASE_URL` (default `""`, `openai_compatible` only).
+- (Same day) `EMBEDDINGS_MIN_SIMILARITY` (float 0–1, default 0.70: measured for gemini-embedding-001, model-specific).
+
+## Amendment (SPEC-BE-088, 2026-10-09): local Ollama for AI Models
+- `OLLAMA_BASE_URL` (default `http://localhost:11434/v1`): Ollama's OpenAI-compatible API on this server. No key is needed.

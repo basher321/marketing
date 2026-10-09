@@ -13,6 +13,14 @@ class ChatMessageCreate(BaseModel):
     body: MessageBody
 
 
+class ResultMedia(BaseModel):
+    """A generated image/video (SPEC-BE-092). No URL: signed URLs expire, so
+    the chat fetches a fresh one with GET /media/{id}."""
+
+    id: str
+    kind: Literal["image", "video"]
+
+
 class ResultItem(BaseModel):
     index: int
     label: str
@@ -20,6 +28,7 @@ class ResultItem(BaseModel):
     summary: str | None = None
     link: str | None = None
     data: list[dict[str, Any]] | None = None
+    media: ResultMedia | None = None
 
 
 class ChatMessage(BaseModel):
@@ -42,7 +51,7 @@ class PlanAction(BaseModel):
     index: int
     type: str
     label: str
-    module: Literal["ecommerce", "shipping", "marketing", "meta", "workflows", "general"]
+    module: Literal["ecommerce", "shipping", "marketing", "meta", "organic", "workflows", "general"]
     risk: Literal["read", "draft", "change", "spend"]
     # auto = runs without approval; approval = a manager+; owner = owner only.
     approval_mode: Literal["auto", "approval", "owner"]

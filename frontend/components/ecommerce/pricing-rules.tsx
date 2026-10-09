@@ -5,7 +5,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 
 import { createPricingRule, fetchPricingRules, pricingKeys, setPricingRuleEnabled } from "@/lib/api/pricing";
 import { fetchProducts, productKeys } from "@/lib/api/products";
-import { ApiError } from "@/lib/types/common";
+import { ApiError, isRoleDenied } from "@/lib/types/common";
 import type { PricingRule, PricingRuleCreate, PricingRuleState } from "@/lib/types/pricing";
 import { formatMoney } from "@/lib/format/money";
 
@@ -68,7 +68,7 @@ function schedule(rule: PricingRule): string {
 // list of field errors as their messages; otherwise the backend's own message.
 function errorText(err: Error): string {
   if (err instanceof ApiError) {
-    if (err.status === 403) return FORBIDDEN;
+    if (isRoleDenied(err)) return FORBIDDEN;
     const detail = (err.body as { detail?: unknown } | undefined)?.detail;
     if (Array.isArray(detail)) {
       return detail

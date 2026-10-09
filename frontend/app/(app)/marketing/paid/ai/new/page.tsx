@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo, useState, type FormEvent } from "react";
 
+import { useCreatedItemTab } from "@/hooks/use-new-tab";
 import { errorText } from "@/components/campaigns/platform-builder/tree";
 import { aiCampaignKeys, fetchReadiness, startRun } from "@/lib/api/ai-campaigns";
 import type { PlatformKey } from "@/lib/types/ads";
@@ -40,7 +40,6 @@ function toIso(local: string): string | null {
 // the "Before you start" list says what is missing. The server enforces the
 // same rules. The AI prepares drafts; the run always stops for review.
 export default function NewAICampaignPage() {
-  const router = useRouter();
   const ready = useQuery({ queryKey: aiCampaignKeys.readiness, queryFn: fetchReadiness });
   const [prompt, setPrompt] = useState("");
   const [chosen, setChosen] = useState<PlatformKey[]>([]);
@@ -95,6 +94,7 @@ export default function NewAICampaignPage() {
   const formOk = Object.keys(errors).length === 0;
   const canStart = Boolean(r) && blockers.length === 0 && formOk;
 
+  const newTab = useCreatedItemTab();
   const start = useMutation({
     mutationFn: () =>
       startRun({
@@ -109,12 +109,16 @@ export default function NewAICampaignPage() {
         youtube_video: chosen.includes("youtube") ? youtube.trim() : null,
         variants_per_group: variants,
       }),
-    onSuccess: (run) => router.push(`/marketing/paid/ai/${run.id}`),
+    onSuccess: (run) => newTab.open(`/marketing/paid/ai/${run.id}`), // SPEC-FE-058
+    onError: () => newTab.cancel(),
   });
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setTried(true);
-    if (canStart) start.mutate();
+    if (canStart) {
+      newTab.begin();
+      start.mutate();
+    }
   };
   const toggle = (key: PlatformKey) => setChosen((cur) => (cur.includes(key) ? cur.filter((k) => k !== key) : cur.length >= 3 ? cur : [...cur, key]));
   // An error shows once its field was edited (or after a Start attempt).

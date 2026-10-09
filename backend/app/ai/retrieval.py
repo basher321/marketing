@@ -18,12 +18,17 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+import structlog
 from sqlalchemy import Float, and_, column, func, or_, select, table, true
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.ai import embeddings
 from app.core.exceptions import NotFoundError
 from app.models.kb_document import KnowledgeBaseDocument
 from app.utils.locale_data import format_money
+
+logger = structlog.get_logger(__name__)
 
 _kb_documents = table(
     "kb_documents", column("id"), column("tenant_id"), column("title"), column("body")
@@ -110,7 +115,72 @@ def _keywords(query: str) -> list[str]:
     return seen[:_MAX_KEYWORDS]
 
 
+# Meaning-based search (SPEC-BE-087): a semantic hit needs cosine >=
+# EMBEDDINGS_MIN_SIMILARITY, so questions the knowledge doesn't cover still get
+# the hand-over template. The value is model-specific: 0.70 was measured for
+# gemini-embedding-001 on the golden set (answers 0.64-0.79, best wrong match of
+# an unanswerable question 0.683).
+SEMANTIC_TOP = 10
+_RRF_K = 60
+
+
 def retrieve_grounding(
+    db: Session, tenant_id: str, query: str, limit: int = 5
+) -> list[GroundingSource]:
+    # Full-text search (below), plus, when embeddings are configured
+    # (EMBEDDINGS_PROVIDER / EMBEDDINGS_API_KEY), meaning-based search over the
+    # same sources merged by reciprocal rank fusion (SPEC-BE-087). With
+    # embeddings off or failing, the result is exactly the full-text one.
+    keyword = _fulltext(db, tenant_id, query, limit)
+    model = embeddings.model_id()
+    if model is None:
+        return keyword
+    try:
+        with db.begin_nested():  # a DB error here never poisons the caller's transaction
+            return _hybrid(db, tenant_id, query, limit, keyword, model)
+    except (embeddings.EmbeddingError, SQLAlchemyError) as exc:
+        logger.warning("retrieval_semantic_unavailable", tenant_id=tenant_id, reason=f"{type(exc).__name__}: {str(exc)[:200]}")
+        return keyword
+
+
+def _hybrid(
+    db: Session, tenant_id: str, query: str, limit: int, keyword: list[GroundingSource], model: str
+) -> list[GroundingSource]:
+    from app.services import knowledge_index_service as index
+
+    current = index.units(db, tenant_id)
+    if not current:
+        return keyword
+    index.refresh(db, tenant_id, current, model)
+    query_vector = embeddings.embed([query], "query")[0]
+    from app.config import get_settings
+
+    threshold = get_settings().EMBEDDINGS_MIN_SIMILARITY
+    semantic = index.search(db, tenant_id, query_vector, current, model, threshold, SEMANTIC_TOP)
+    fused: dict[tuple[str, str], float] = {}
+    sources: dict[tuple[str, str], GroundingSource] = {}
+    for rank, source in enumerate(keyword, start=1):
+        key = (source.kind, source.id)
+        fused[key] = fused.get(key, 0.0) + 1.0 / (_RRF_K + rank)
+        sources[key] = source
+    semantic_rank = 0
+    seen: set[tuple[str, str]] = set()
+    for unit, _similarity in semantic:
+        key = (unit.kind, unit.source_id)
+        if key in seen:
+            continue  # a later chunk of the same KB document
+        seen.add(key)
+        semantic_rank += 1
+        fused[key] = fused.get(key, 0.0) + 1.0 / (_RRF_K + semantic_rank)
+        if key not in sources or unit.kind == "kb_document":
+            # The matching chunk is the better snippet for a KB document.
+            sources[key] = GroundingSource(kind=unit.kind, id=unit.source_id, title=unit.title, snippet=unit.snippet, score=0.0)
+    ranked = sorted(fused, key=lambda k: (-fused[k], k[0], k[1]))[:limit]
+    return [GroundingSource(kind=sources[k].kind, id=sources[k].id, title=sources[k].title, snippet=sources[k].snippet,
+                            score=round(fused[k], 6)) for k in ranked]
+
+
+def _fulltext(
     db: Session, tenant_id: str, query: str, limit: int = 5
 ) -> list[GroundingSource]:
     # Grounding for reply drafting (SPEC-BE-027): the tenant's kb_documents
@@ -118,9 +188,8 @@ def retrieve_grounding(
     # by tenant_id. Relevance = Postgres full-text search: the query's keywords
     # OR-ed into to_tsquery('english', ...), ranked by ts_rank_cd; rows that do
     # not match (rank 0) are not relevant. Empty list when nothing matches.
-    # (No pgvector/embeddings exist in the live DB.) SPEC-BE-048 adds the
-    # tenant's policies: enabled, and in effect now (effective_from NULL or
-    # <= now, effective_until NULL or > now).
+    # SPEC-BE-048 adds the tenant's policies: enabled, and in effect now
+    # (effective_from NULL or <= now, effective_until NULL or > now).
     keywords = _keywords(query)
     if not keywords:
         return []

@@ -20,9 +20,12 @@ logger = structlog.get_logger(__name__)
 CREATIVE_FORMAT = "ad_text"
 
 
-def generate_content(brief: str, tone: str = "friendly", voice_guidelines: str = "") -> str:
+def generate_content(
+    db: Session, tenant_id: str, brief: str, tone: str = "friendly", voice_guidelines: str = ""
+) -> str:
     prompt = build_content_prompt(brief, tone, voice_guidelines)
-    return llm_client.complete("You are a marketing copywriter.", prompt)
+    # db + tenant_id: the company's AI models in their fallback order (SPEC-BE-088).
+    return llm_client.complete("You are a marketing copywriter.", prompt, db=db, tenant_id=tenant_id)
 
 
 # Campaign Wizard creative variants (SPEC-BE-030). Generation is SPEC-BE-029's

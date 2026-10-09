@@ -142,8 +142,69 @@ def plan_prompts(ctx: dict[str, Any]) -> tuple[str, str]:
     return system, user
 
 
+# Targeting the advertiser stated explicitly (SPEC-BE-085 FR10). Only clear
+# targeting phrases count: "gifts for mothers" names a product, not an audience.
+_AGE_RANGES = (
+    re.compile(r"\b(?:aged?|ages)\s*(\d{2})\s*(?:-|–|—|to)\s*(\d{2})\b", re.IGNORECASE),
+    re.compile(r"\b(\d{2})\s*(?:-|–|—|to)\s*(\d{2})\s*(?:years?|yrs?|y/?o\b|year-olds?)", re.IGNORECASE),
+)
+_GENDER_WORDS = {"female": r"(?:women|woman|female|females|ladies)", "male": r"(?:men|man|male|males|gentlemen)"}
+
+
+def _gender_patterns(words: str) -> tuple[re.Pattern[str], ...]:
+    return (
+        re.compile(rf"\b(?:target(?:ing)?|reach|only|just)\s+(?:young\s+|adult\s+|working\s+)?{words}\b", re.IGNORECASE),
+        re.compile(rf"\b{words}\s+only\b", re.IGNORECASE),
+        re.compile(rf"\b{words}\s+(?:aged?\s*)?\d{{2}}\s*(?:-|–|—|to)\s*\d{{2}}", re.IGNORECASE),
+        re.compile(rf"\b{words}\s+audience\b|\baudience\b[^.]{{0,20}}\b{words}\b", re.IGNORECASE),
+    )
+
+
+_GENDER_PATTERNS = {g: _gender_patterns(w) for g, w in _GENDER_WORDS.items()}
+
+
+def stated_targeting(text: str) -> dict[str, Any]:
+    """{"ages": (min, max) | None, "gender": "female" | "male" | None,
+    "countries": {ISO codes named in the text}}."""
+    from app.ai.command_guard import AMBIGUOUS_COUNTRY_NAMES, country_codes_in
+
+    ages = None
+    for pattern in _AGE_RANGES:
+        m = pattern.search(text)
+        if m and 13 <= int(m.group(1)) < int(m.group(2)) <= 100:
+            ages = (int(m.group(1)), int(m.group(2)))
+            break
+    genders = [g for g, patterns in _GENDER_PATTERNS.items() if any(p.search(text) for p in patterns)]
+    return {
+        "ages": ages,
+        "gender": genders[0] if len(genders) == 1 else None,
+        "countries": country_codes_in(text, case_sensitive=True, exclude=AMBIGUOUS_COUNTRY_NAMES),
+    }
+
+
+def _stated_errors(name: str, gi: int, aud: dict[str, Any], stated: dict[str, Any]) -> list[str]:
+    from app.ai.command_guard import AMBIGUOUS_COUNTRY_NAMES, country_codes_in
+
+    errors: list[str] = []
+    if name not in NO_DEMOGRAPHICS and stated["ages"]:
+        lo, hi = stated["ages"]
+        if aud.get("age_min") != lo or aud.get("age_max") != hi:
+            errors.append(f"{name} group {gi + 1}: the brief asks for ages {lo}-{hi}; set age_min {lo} and age_max {hi}.")
+    if name not in NO_DEMOGRAPHICS and stated["gender"] and list(aud.get("genders") or []) != [stated["gender"]]:
+        errors.append(f"{name} group {gi + 1}: the brief targets {stated['gender']} only; set genders [\"{stated['gender']}\"].")
+    if stated["countries"]:
+        for loc in aud.get("locations") or []:
+            other = country_codes_in(str(loc), case_sensitive=True, exclude=AMBIGUOUS_COUNTRY_NAMES) - stated["countries"]
+            if other:
+                errors.append(f"{name} group {gi + 1}: location “{loc}” is outside the countries the brief names "
+                              f"({', '.join(sorted(stated['countries']))}).")
+    return errors
+
+
 def check_plan(plan: dict[str, Any], ctx: dict[str, Any]) -> list[str]:
     errors: list[str] = []
+    answers = " ".join(str(a.get("answer") or "") for a in ctx.get("answers") or [] if isinstance(a, dict))
+    stated = stated_targeting(f"{ctx.get('prompt') or ''} {answers}")
     got = [p.get("platform") for p in plan.get("platforms") or []]
     if got != ctx["platforms"]:
         errors.append(f"platforms must be exactly {ctx['platforms']} in that order (got {got}).")
@@ -164,6 +225,7 @@ def check_plan(plan: dict[str, Any], ctx: dict[str, Any]) -> list[str]:
             aud = g.get("audience") or {}
             if not [x for x in aud.get("locations") or [] if str(x).strip()]:
                 errors.append(f"{name} group {gi + 1}: at least one location.")
+            errors += _stated_errors(name, gi, aud, stated)
             ads = g.get("ads") or []
             if len(ads) != ctx["variants"]:
                 errors.append(f"{name} group {gi + 1}: exactly {ctx['variants']} ads.")
