@@ -466,3 +466,39 @@ def test_mcp_tool(db: Session, tenant_id: str, actor_user_id: str, tool_id: str)
     write_audit_log(db, tenant_id=tenant_id, actor_user_id=actor_user_id, action="ai_model.mcp_tested", resource_type="tenant",
                     resource_id=tenant_id, metadata={"tool_id": tool_id, "ok": ok})
     return {"ok": ok, "message": message, "tools_found": found}
+
+
+# ---------------------------------------------------------------------------
+# Sound for AI slideshow videos (SPEC-BE-094): tenants.settings.creative.video_audio
+# ---------------------------------------------------------------------------
+VIDEO_AUDIO_DEFAULTS: dict[str, Any] = {"voiceover": True, "voice": "alloy", "music_media_id": None, "music_volume": 0.25}
+
+
+def video_audio(db: Session, tenant_id: str) -> dict[str, Any]:
+    """The company's settings (defaults filled in) plus the chosen track."""
+    from app.services import media_service
+
+    tenant = _tenant(db, tenant_id)
+    cfg = {**VIDEO_AUDIO_DEFAULTS, **dict(_creative(tenant).get("video_audio") or {})}
+    music = None
+    if cfg.get("music_media_id"):
+        try:
+            music = media_service.media_dict(media_service.require(db, tenant_id, str(cfg["music_media_id"])))
+        except NotFoundError:
+            cfg["music_media_id"] = None  # the track was deleted from the media library
+    return {**cfg, "music": music}
+
+
+def set_video_audio(db: Session, tenant_id: str, actor_user_id: str, payload: Any) -> dict[str, Any]:
+    from app.services import media_service
+
+    data = payload.model_dump()
+    if data.get("music_media_id"):
+        media_service.media_rows(db, tenant_id, [str(data["music_media_id"])], kinds=("audio",))
+    tenant = _tenant(db, tenant_id)
+    creative = _creative(tenant)
+    creative["video_audio"] = {k: data[k] for k in VIDEO_AUDIO_DEFAULTS}
+    _save_creative(tenant, creative)
+    write_audit_log(db, tenant_id=tenant_id, actor_user_id=actor_user_id, action="ai_model.video_audio",
+                    resource_type="tenant", resource_id=tenant_id, metadata=creative["video_audio"])
+    return video_audio(db, tenant_id)

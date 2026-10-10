@@ -8,6 +8,8 @@ from app.db.session import get_db
 from app.dependencies import get_current_user, require_permission
 from app.models.user import User
 from app.schemas.ai_model import (
+    VideoAudioSave,
+    VideoAudioSettings,
     MCP_ID,
     AIModelList,
     AIModelOrder,
@@ -40,6 +42,18 @@ def set_ai_model_order(
     current_user: User = Depends(require_permission("manager")),
 ) -> dict[str, Any]:
     return ai_model_service.set_order(db, str(current_user.tenant_id), str(current_user.id), list(payload.order))
+
+
+# --- Sound for AI slideshow videos (SPEC-BE-094), before /{provider} ---
+@router.get("/video-audio", response_model=VideoAudioSettings, status_code=status.HTTP_200_OK)
+def get_video_audio(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    return ai_model_service.video_audio(db, str(current_user.tenant_id))
+
+
+@router.put("/video-audio", response_model=VideoAudioSettings, status_code=status.HTTP_200_OK)
+def put_video_audio(payload: VideoAudioSave, db: Session = Depends(get_db),
+                    current_user: User = Depends(require_permission("manager"))) -> dict[str, Any]:
+    return ai_model_service.set_video_audio(db, str(current_user.tenant_id), str(current_user.id), payload)
 
 
 # --- Creative providers + MCP creative tools (SPEC-BE-070), before /{provider} ---

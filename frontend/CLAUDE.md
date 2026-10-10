@@ -195,3 +195,8 @@ spec justifies it.
   `status === 403`, before showing a "your role can't…" message. Only the backend's role check
   ("Insufficient permissions…") is a role problem. Other 403s (SocialAPI/Zernio refusals, "Only the owner
   can …", an expired media link) show the backend's own text.
+- Sound for AI videos (SPEC-FE-060, 2026-10-10): the card is in Integrations › AI Models (`VideoAudioSection` in
+  `components/integrations/ai-models.tsx`).
+  - **Controls:** the voiceover switch and voice, a music upload / pick / remove with an `<audio>` preview, and
+    the volume.
+  - **Media type:** `MediaKind` includes "audio", which only appears with `fetchMedia("audio")`.

@@ -33,7 +33,12 @@ logger = structlog.get_logger(__name__)
 
 IMAGE_MAX = 30 * 1024 * 1024
 VIDEO_MAX = 1024 * 1024 * 1024
-EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "video/mp4": "mp4", "video/quicktime": "mov"}
+AUDIO_MAX = 20 * 1024 * 1024  # background music for AI videos (SPEC-BE-094)
+EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "video/mp4": "mp4", "video/quicktime": "mov",
+       "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/wav": "wav"}
+# Posts, ads and generations use images and videos only; audio is only the
+# company's background music for AI videos (SPEC-BE-094).
+VISUAL_KINDS = ("image", "video")
 PIL_FORMAT = {"image/jpeg": "JPEG", "image/png": "PNG", "image/webp": "WEBP"}
 
 
@@ -46,10 +51,41 @@ def kind_of(content: bytes) -> str | None:
     if content[:4] == b"RIFF" and content[8:12] == b"WEBP":
         return "image/webp"
     if content[4:8] == b"ftyp":
+        if content[8:12] in (b"M4A ", b"M4B "):
+            return "audio/mp4"
         return "video/quicktime" if content[8:10] == b"qt" else "video/mp4"
     if content[4:8] in (b"moov", b"mdat", b"wide", b"free"):
         return "video/quicktime"
+    if content[:3] == b"ID3" or (len(content) > 1 and content[0] == 0xFF and content[1] & 0xE0 == 0xE0):
+        return "audio/mpeg"
+    if content[:4] == b"RIFF" and content[8:12] == b"WAVE":
+        return "audio/wav"
     return None
+
+
+def kind_for(mime: str) -> str:
+    return "image" if mime.startswith("image/") else "audio" if mime.startswith("audio/") else "video"
+
+
+def audio_duration_ms(content: bytes) -> int | None:
+    """Audio length from the bundled ffmpeg (SPEC-BE-094); None if unreadable."""
+    import re as _re
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    try:
+        import imageio_ffmpeg  # type: ignore[import-untyped]  # no stubs published
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "a.bin"
+            path.write_bytes(content)
+            err = subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-i", str(path)],  # noqa: S603 - fixed binary
+                                 capture_output=True, timeout=60, check=False).stderr.decode(errors="replace")
+    except Exception:  # noqa: BLE001 - duration is informational
+        return None
+    m = _re.search(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)", err)
+    return int((int(m[1]) * 3600 + int(m[2]) * 60 + float(m[3])) * 1000) if m else None
 
 
 # ---------------------------------------------------------------------------
@@ -180,8 +216,9 @@ def require(db: Session, tenant_id: str, media_id: str) -> MediaAsset:
     return asset
 
 
-def media_rows(db: Session, tenant_id: str, ids: list[str]) -> list[MediaAsset]:
-    """Rows in the given order; an unknown, deleted or foreign id is a 422."""
+def media_rows(db: Session, tenant_id: str, ids: list[str], kinds: tuple[str, ...] = VISUAL_KINDS) -> list[MediaAsset]:
+    """Rows in the given order; an unknown, deleted or foreign id is a 422,
+    and so is a kind not in `kinds` (audio is never post/ad media)."""
     if not ids:
         return []
     rows = {
@@ -190,6 +227,9 @@ def media_rows(db: Session, tenant_id: str, ids: list[str]) -> list[MediaAsset]:
     }
     if any(i not in rows for i in ids):
         raise AppError("Some media items don't exist (or were deleted).", 422)
+    if any(rows[i].kind not in kinds for i in ids):
+        raise AppError("Audio files can only be used as background music for AI videos." if "audio" not in kinds
+                       else "Choose an audio file.", 422)
     return [rows[i] for i in ids]
 
 
@@ -201,8 +241,8 @@ def list_media(
     db: Session, tenant_id: str, kind: str | None, source: str | None, q: str | None, page: int, page_size: int = 40
 ) -> dict[str, Any]:
     query = db.query(MediaAsset).filter(MediaAsset.tenant_id == tenant_id, MediaAsset.deleted_at.is_(None))
-    if kind:
-        query = query.filter(MediaAsset.kind == kind)
+    # Audio is listed only when asked for, so every image/video picker is unchanged (SPEC-BE-094).
+    query = query.filter(MediaAsset.kind == kind) if kind else query.filter(MediaAsset.kind.in_(VISUAL_KINDS))
     if source:
         query = query.filter(MediaAsset.source == source)
     if q:
@@ -247,10 +287,12 @@ def store(
     source return the existing row (dedupe on tenant + sha256 + source)."""
     mime = kind_of(content)
     if mime is None:
-        raise AppError("Upload a JPG, PNG or WebP image, or an MP4/MOV video.", 422)
-    kind = "image" if mime.startswith("image/") else "video"
-    if len(content) > (IMAGE_MAX if kind == "image" else VIDEO_MAX):
-        raise AppError("The image can be at most 30 MB." if kind == "image" else "The video can be at most 1 GB.", 413)
+        raise AppError("Upload a JPG, PNG or WebP image, an MP4/MOV video, or MP3/M4A/WAV music.", 422)
+    kind = kind_for(mime)
+    limit = {"image": IMAGE_MAX, "video": VIDEO_MAX, "audio": AUDIO_MAX}[kind]
+    if len(content) > limit:
+        raise AppError({"image": "The image can be at most 30 MB.", "video": "The video can be at most 1 GB.",
+                        "audio": "The music file can be at most 20 MB."}[kind], 413)
     digest = hashlib.sha256(content).hexdigest()
     existing = (
         db.query(MediaAsset)
@@ -266,6 +308,8 @@ def store(
             _, width, height = image_size(content)
         except ValueError:
             width = height = None
+    elif kind == "audio":
+        duration_ms = audio_duration_ms(content)
     else:
         duration_ms, width, height = video_info(content)
     asset = MediaAsset(

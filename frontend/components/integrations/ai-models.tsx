@@ -16,8 +16,19 @@ import {
   updateAIModel,
 } from "@/lib/api/integrations";
 import type { AIModelList, AIModelProvider, AIModelTestResult, ModelOption } from "@/lib/types/integrations";
-import { aiCampaignKeys, deleteMCPTool, fetchCreativeSettings, saveCreativeOrder, saveMCPTool, testMCPTool } from "@/lib/api/ai-campaigns";
-import type { CreativeKind, CreativeSettings, MCPTool, MCPToolTest } from "@/lib/types/ai-campaigns";
+import {
+  aiCampaignKeys,
+  deleteMCPTool,
+  fetchCreativeSettings,
+  fetchVideoAudio,
+  saveCreativeOrder,
+  saveMCPTool,
+  saveVideoAudio,
+  testMCPTool,
+} from "@/lib/api/ai-campaigns";
+import { fetchMedia, mediaKeys, uploadMedia } from "@/lib/api/media";
+import { TTS_VOICES } from "@/lib/types/ai-campaigns";
+import type { CreativeKind, CreativeSettings, MCPTool, MCPToolTest, TTSVoice, VideoAudioSave, VideoAudioSettings } from "@/lib/types/ai-campaigns";
 
 const FORBIDDEN = "Only managers and above can change integrations.";
 
@@ -352,6 +363,7 @@ export default function AIModels() {
         </>
       )}
       <CreativeSettingsSection />
+      <VideoAudioSection />
     </section>
   );
 }
@@ -553,6 +565,113 @@ function CreativeSettingsSection() {
           {failure && <p className="text-xs text-danger">{apiErrorText(failure, FORBIDDEN)}</p>}
         </>
       )}
+    </div>
+  );
+}
+
+// Sound for AI videos (SPEC-FE-060): voiceover + background music for the
+// OpenAI slideshow videos (SPEC-BE-094). Veo videos come with their own sound.
+function VideoAudioSection() {
+  const queryClient = useQueryClient();
+  const settings = useQuery({ queryKey: aiCampaignKeys.videoAudio, queryFn: fetchVideoAudio });
+  const tracks = useQuery({ queryKey: mediaKeys.list("audio"), queryFn: () => fetchMedia("audio") });
+  const save = useMutation({
+    mutationFn: (changes: Partial<VideoAudioSave>) => {
+      const cur = settings.data as VideoAudioSettings;
+      return saveVideoAudio({ voiceover: cur.voiceover, voice: cur.voice, music_media_id: cur.music_media_id, music_volume: cur.music_volume, ...changes });
+    },
+    onSuccess: (d) => queryClient.setQueryData(aiCampaignKeys.videoAudio, d),
+  });
+  const upload = useMutation({
+    mutationFn: async (file: File) => (await uploadMedia(file)).id,
+    onSuccess: (id) => {
+      void queryClient.invalidateQueries({ queryKey: mediaKeys.list("audio") });
+      save.mutate({ music_media_id: id });
+    },
+  });
+  const failure = save.error ?? upload.error;
+  if (settings.isPending) return <p className="mt-6 text-[13px] text-muted">Loading sound settings…</p>;
+  if (settings.isError) return <p className="mt-6 text-[13px] text-danger">{apiErrorText(settings.error, FORBIDDEN)}</p>;
+  const d = settings.data;
+  const others = (tracks.data?.items ?? []).filter((t) => t.id !== d.music_media_id);
+  return (
+    <div className="mt-6" data-testid="video-audio">
+      <h3 className="mb-1 mt-0 text-[15px]">Sound for AI videos</h3>
+      <p className="m-0 mb-2 text-[13px] text-muted">
+        Used when OpenAI makes a slideshow video. Google Veo videos come with their own sound.
+      </p>
+      <div className="card grid gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-[13px]">
+            <input type="checkbox" checked={d.voiceover} disabled={save.isPending} onChange={(e) => save.mutate({ voiceover: e.target.checked })} />
+            AI voiceover (the AI writes a short script; OpenAI reads it)
+          </label>
+          <select value={d.voice} disabled={!d.voiceover || save.isPending} onChange={(e) => save.mutate({ voice: e.target.value as TTSVoice })} aria-label="Voice">
+            {TTS_VOICES.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="grid gap-2">
+          <div className="text-[13px] font-semibold">Background music</div>
+          {d.music ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-[13px]">{d.music.name ?? "Your track"}</span>
+              <audio controls src={d.music.url} className="h-8" />
+              <button type="button" className="btn btn-secondary btn-sm" disabled={save.isPending} onClick={() => save.mutate({ music_media_id: null })}>
+                Remove
+              </button>
+            </div>
+          ) : (
+            <p className="m-0 text-[13px] text-muted">No music yet. Use a track you have the rights to.</p>
+          )}
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="btn btn-secondary btn-sm cursor-pointer">
+              {upload.isPending ? "Uploading…" : d.music ? "Upload another track" : "Upload music"}
+              <input
+                type="file"
+                accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,.mp3,.m4a,.wav"
+                className="hidden"
+                disabled={upload.isPending}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) upload.mutate(f);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            <span className="text-xs text-muted">MP3, M4A or WAV, up to 20 MB</span>
+            {others.length > 0 && (
+              <select value="" onChange={(e) => e.target.value && save.mutate({ music_media_id: e.target.value })} aria-label="Use an uploaded track">
+                <option value="">Use an uploaded track…</option>
+                {others.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name ?? t.id}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+          {d.music && (
+            <label className="flex items-center gap-2 text-[13px]">
+              Music volume
+              <input
+                type="range"
+                min={5}
+                max={100}
+                step={5}
+                defaultValue={Math.round(d.music_volume * 100)}
+                onMouseUp={(e) => save.mutate({ music_volume: Number((e.target as HTMLInputElement).value) / 100 })}
+                onKeyUp={(e) => save.mutate({ music_volume: Number((e.target as HTMLInputElement).value) / 100 })}
+              />
+              <span className="text-muted">{Math.round(d.music_volume * 100)} %</span>
+            </label>
+          )}
+        </div>
+        {failure && <p className="m-0 text-[13px] text-danger">{apiErrorText(failure, FORBIDDEN)}</p>}
+      </div>
     </div>
   );
 }

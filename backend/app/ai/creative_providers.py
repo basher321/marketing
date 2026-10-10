@@ -90,6 +90,8 @@ class CreativeResult:
     input_tokens: int = 0
     output_tokens: int = 0
     cost_cents: int = 0
+    # Plain-language notes for the job (SPEC-BE-094: what sound was added, or why not).
+    notes: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -608,9 +610,155 @@ class OpenAISlideshowProvider:
             images.append(shot.image or b"")
             model, cost = shot.model, cost + shot.cost_cents
         data = self._encode(images, size, seconds)
+        data, notes, audio_cost = self._with_sound(db, tenant_id, req, data, seconds)
         result = _video_result(self.key, f"{model} slideshow ({n} images)", data, 0)
-        result.width, result.height, result.cost_cents = size[0], size[1], cost
+        result.width, result.height, result.cost_cents, result.notes = size[0], size[1], cost + audio_cost, notes
         return result
+
+    # --- Sound (SPEC-BE-094): an AI voiceover and/or the company's music ---
+    TTS_MODEL = "gpt-4o-mini-tts"
+    WORDS_PER_SECOND = 2.3
+    VOICE_CENTS = 1
+
+    def _with_sound(self, db: Session, tenant_id: str, req: CreativeRequest, video: bytes, seconds: int) -> tuple[bytes, list[str], int]:
+        """Adds sound when the company set any up; a failure never fails the
+        video, it keeps what still works and says why in the notes."""
+        from app.services.ai_model_service import video_audio
+
+        cfg = video_audio(db, tenant_id)
+        notes: list[str] = []
+        voice: bytes | None = None
+        music: bytes | None = None
+        cost = 0
+        if cfg.get("voiceover"):
+            try:
+                voice = self._voiceover(db, tenant_id, req, seconds, str(cfg.get("voice") or "alloy"))
+                cost += self.VOICE_CENTS
+                notes.append(f"Voiceover added ({cfg.get('voice')}).")
+            except ProviderFailed as exc:
+                notes.append(f"No voiceover: {exc}")
+        if cfg.get("music"):
+            try:
+                music = self._music(db, tenant_id, str(cfg["music_media_id"]))
+                notes.append(f"Background music: {cfg['music'].get('name') or 'your track'}.")
+            except ProviderFailed as exc:
+                notes.append(f"No background music: {exc}")
+        if voice is None and music is None:
+            if not cfg.get("voiceover") and not cfg.get("music"):
+                notes.append("No sound: turn on the voiceover or add background music in Integrations › AI Models › Sound for AI videos.")
+            return video, notes, cost
+        try:
+            return self._mix(video, voice, music, seconds, float(cfg.get("music_volume") or 0.25)), notes, cost
+        except ProviderFailed as exc:
+            return video, [*notes, f"Sound couldn't be added: {exc}"], 0
+
+    def _voiceover(self, db: Session, tenant_id: str, req: CreativeRequest, seconds: int, voice: str) -> bytes:
+        from app.ai.llm_client import LLMProviderError, llm_client
+        from app.ai.retrieval import get_brand_voice
+
+        brand = get_brand_voice(db, tenant_id)
+        words = max(4, int(self.WORDS_PER_SECOND * (seconds - 1)))
+        system = ("You write voiceover scripts for short social media video ads. Reply with the spoken words only: "
+                  "no quotes, labels, hashtags, emojis, stage directions or URLs.")
+        user = (f"Video: {req.prompt[:1500]}\nBrand: {brand.brand_name or 'the brand'}\n"
+                f"Language (ISO code): {brand.primary_language or 'en'}\n"
+                f"Write one natural, upbeat spoken script of at most {words} words that fits {seconds} seconds.")
+        try:
+            out = llm_client.complete_with_usage(system, user, 300, 60.0, db=db, tenant_id=tenant_id)
+        except LLMProviderError as exc:
+            raise ProviderFailed(f"the AI couldn't write the script ({short(str(exc), 120)})") from None
+        script = " ".join(out.text.replace('"', "").split())
+        script = " ".join(script.split()[: words + 3])
+        if len(script) < 3:
+            raise ProviderFailed("the AI returned an empty script")
+        key = _saved_key(db, tenant_id, "openai")
+        if not key:
+            raise ProviderFailed("no OpenAI key saved (needed for the voice)")
+        try:
+            resp = http("POST", "https://api.openai.com/v1/audio/speech", headers={"Authorization": f"Bearer {key}"},
+                        json={"model": self.TTS_MODEL, "voice": voice, "input": script, "response_format": "mp3",
+                              "instructions": "Warm, confident, upbeat advertising voice. Natural pace."}, timeout=120.0)
+        except PlatformError as exc:
+            raise ProviderFailed(f"OpenAI voice: {exc.message}") from None
+        if resp.status_code >= 400:
+            raise ProviderFailed(f"OpenAI voice: HTTP {resp.status_code}: {_error_message(resp)}")
+        if len(resp.content) < 256:
+            raise ProviderFailed("OpenAI returned no audio")
+        return bytes(resp.content)
+
+    def _music(self, db: Session, tenant_id: str, media_id: str) -> bytes:
+        from app.integrations.storage import get_storage
+        from app.services import media_service
+
+        try:
+            asset = media_service.media_rows(db, tenant_id, [media_id], kinds=("audio",))[0]
+            return bytes(get_storage().get(asset.storage_key))
+        except Exception as exc:  # noqa: BLE001 - the video still goes out without music
+            raise ProviderFailed(f"the music file couldn't be read ({short(str(getattr(exc, 'detail', exc)), 100)})") from None
+
+    def _mix(self, video: bytes, voice: bytes | None, music: bytes | None, seconds: int, volume: float) -> bytes:
+        """Two ffmpeg runs: mix the audio to a WAV of exactly `seconds`, then
+        mux it with the video (copied, not re-encoded). One combined run
+        (video input + amix + -t) produced only ~0.06 s of audio."""
+        import subprocess
+        import tempfile
+        from pathlib import Path
+
+        from app.services.media_service import audio_duration_ms
+
+        try:
+            import imageio_ffmpeg  # type: ignore[import-untyped]  # no stubs published
+
+            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+        except (ImportError, RuntimeError) as exc:
+            raise ProviderFailed(f"ffmpeg isn't available ({exc})") from None
+
+        def run(args: list[str]) -> None:
+            try:
+                done = subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-y", *args],  # noqa: S603 - fixed binary, no shell
+                                      capture_output=True, timeout=300, check=False)
+            except subprocess.TimeoutExpired:
+                raise ProviderFailed("ffmpeg timed out adding sound") from None
+            if done.returncode != 0:
+                raise ProviderFailed(f"ffmpeg: {short(done.stderr.decode(errors='replace'), 160)}")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            args: list[str] = []
+            chains: list[str] = []
+            labels: list[str] = []
+            index = 0
+            if voice is not None:
+                (Path(tmp) / "voice.mp3").write_bytes(voice)
+                args += ["-i", str(Path(tmp) / "voice.mp3")]
+                spoken = (audio_duration_ms(voice) or 0) / 1000
+                room = max(1.0, seconds - 0.6)
+                tempo = min(1.3, spoken / room) if spoken > room else 1.0  # speed up a long read, then trim
+                # Each chain is exactly `seconds` long (apad / aloop + atrim).
+                chains.append(f"[{index}:a]aresample=48000,atempo={tempo:.3f},adelay=300:all=1,apad,atrim=0:{seconds},"
+                              f"afade=t=out:st={max(0.0, seconds - 0.5):.2f}:d=0.5[vo]")
+                labels.append("[vo]")
+                index += 1
+            if music is not None:
+                (Path(tmp) / "music.bin").write_bytes(music)
+                args += ["-i", str(Path(tmp) / "music.bin")]
+                level = volume if voice is not None else min(1.0, volume * 2)  # quieter under a voice
+                chains.append(f"[{index}:a]aresample=48000,aloop=loop=-1:size=2147483647,atrim=0:{seconds},asetpts=N/SR/TB,"
+                              f"volume={level:.2f},afade=t=in:d=0.5,afade=t=out:st={max(0.0, seconds - 1.2):.2f}:d=1.2[mu]")
+                labels.append("[mu]")
+            if len(labels) == 2:
+                chains.append("[vo][mu]amix=inputs=2:duration=first:normalize=0[a]")
+                out_label = "[a]"
+            else:
+                out_label = labels[0]
+            mix = Path(tmp) / "mix.wav"
+            run([*args, "-filter_complex", ";".join(chains), "-map", out_label, "-ar", "48000", "-ac", "2", str(mix)])
+            (Path(tmp) / "v.mp4").write_bytes(video)
+            out = Path(tmp) / "out.mp4"
+            run(["-i", str(Path(tmp) / "v.mp4"), "-i", str(mix), "-map", "0:v", "-map", "1:a", "-c:v", "copy",
+                 "-c:a", "aac", "-b:a", "128k", "-t", str(seconds), "-movflags", "+faststart", str(out)])
+            if not out.exists():
+                raise ProviderFailed("ffmpeg produced no file")
+            return out.read_bytes()
 
     def _encode(self, images: list[bytes], size: tuple[int, int], seconds: int) -> bytes:
         import subprocess

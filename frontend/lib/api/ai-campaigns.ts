@@ -11,6 +11,8 @@ import type {
   Readiness,
   MCPToolSave,
   MCPToolTest,
+  VideoAudioSave,
+  VideoAudioSettings,
 } from "../types/ai-campaigns";
 import { apiFetch } from "./client";
 
@@ -22,6 +24,7 @@ export const aiCampaignKeys = {
   readiness: ["ai-campaigns", "readiness"] as const,
   run: (id: string) => ["ai-campaigns", "run", id] as const,
   creative: ["ai-models", "creative"] as const,
+  videoAudio: ["ai-models", "video-audio"] as const,
 };
 
 /** What the form may offer, from real data (SPEC-FE-046 amendment). */
@@ -40,6 +43,10 @@ export const publishRun = (id: string, acknowledgeWarnings: boolean, mode: "acti
   apiFetch<AICampaignRun>(`${V1}/ai-campaigns/${enc(id)}/publish`, { method: "POST", body: { acknowledge_warnings: acknowledgeWarnings, mode } });
 
 export const fetchCreativeSettings = () => apiFetch<CreativeSettings>(`${V1}/ai-models/creative`);
+// Sound for AI slideshow videos (SPEC-FE-060).
+export const fetchVideoAudio = () => apiFetch<VideoAudioSettings>(`${V1}/ai-models/video-audio`);
+export const saveVideoAudio = (body: VideoAudioSave) =>
+  apiFetch<VideoAudioSettings>(`${V1}/ai-models/video-audio`, { method: "PUT", body: { ...body } });
 export const saveCreativeOrder = (order: Partial<Record<CreativeKind, string[]>>) =>
   apiFetch<CreativeSettings>(`${V1}/ai-models/creative`, { method: "PUT", body: { order } });
 export const saveMCPTool = (id: string, body: MCPToolSave) =>

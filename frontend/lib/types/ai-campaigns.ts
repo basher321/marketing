@@ -1,4 +1,5 @@
 /** AI Ad Autopilot (SPEC-BE-069/070), mirroring backend/app/schemas/ai_campaign.py and ai_model.py. */
+import type { MediaItem } from "./media";
 import type { PlatformKey } from "./ads";
 
 export type RunStatus =
@@ -158,4 +159,19 @@ export interface Readiness {
   brand: { name: string; has_logo: boolean; forbidden_terms: string[] };
   currency: string;
   country: string;
+}
+
+/** Sound for AI slideshow videos (SPEC-BE-094 / SPEC-FE-060), mirroring schemas/ai_model.py. */
+export const TTS_VOICES = ["alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer", "verse"] as const;
+export type TTSVoice = (typeof TTS_VOICES)[number];
+
+export interface VideoAudioSave {
+  voiceover: boolean;
+  voice: TTSVoice;
+  music_media_id: string | null;
+  music_volume: number;
+}
+
+export interface VideoAudioSettings extends VideoAudioSave {
+  music: MediaItem | null;
 }

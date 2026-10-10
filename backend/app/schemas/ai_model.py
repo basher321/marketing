@@ -144,3 +144,19 @@ class MCPToolTest(BaseModel):
     ok: bool
     message: str
     tools_found: list[str]
+
+
+# Sound for AI slideshow videos (SPEC-BE-094). OpenAI text-to-speech voices.
+TTSVoice = Literal["alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer", "verse"]
+
+
+class VideoAudioSave(BaseModel):
+    voiceover: bool = True
+    voice: TTSVoice = "alloy"
+    music_media_id: str | None = Field(default=None, max_length=36)
+    music_volume: float = Field(default=0.25, ge=0.05, le=1.0)
+
+
+class VideoAudioSettings(VideoAudioSave):
+    # The chosen track (media item with a signed URL), or None.
+    music: dict[str, Any] | None = None

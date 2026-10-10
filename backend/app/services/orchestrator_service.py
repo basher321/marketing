@@ -261,7 +261,9 @@ def _media_library(db: Session, tenant_id: str, focus: str) -> list[dict[str, An
     from app.models.media import MediaAsset
 
     words = sorted({w for w in re.findall(r"[^\W_]{3,}", focus.lower())})[:20]
-    query = db.query(MediaAsset).filter(MediaAsset.tenant_id == tenant_id, MediaAsset.deleted_at.is_(None))
+    # Audio (background music, SPEC-BE-094) is never ad/post media.
+    query = db.query(MediaAsset).filter(MediaAsset.tenant_id == tenant_id, MediaAsset.deleted_at.is_(None),
+                                        MediaAsset.kind.in_(("image", "video")))
     order = [MediaAsset.created_at.desc(), MediaAsset.id]
     if words:
         named = or_(*[MediaAsset.name.ilike(f"%{w}%") for w in words])

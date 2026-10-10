@@ -208,6 +208,17 @@ section before trusting any model.
     `ResultItem.media {id, kind}` drives the inline preview (fresh URL from `GET /media/{id}`).
   - **Models** are the company's own choices in AI Models. Claude has no image/video, so text follows the
     company priority order (pilotsonic: Claude → Gemini → OpenAI).
+- Sound for AI slideshow videos (SPEC-BE-094 + SPEC-FE-060, 2026-10-10):
+  - **The media library accepts audio** (MP3/M4A/WAV, 20 MB). The DDL is applied: `media_assets.kind` adds
+    'audio'.
+  - **Audio stays out of posts and ads:** it is listed only with `?kind=audio`, and `media_rows` refuses it
+    unless `kinds=("audio",)`.
+  - **Settings:** `tenants.settings.creative.video_audio` {voiceover, voice, music_media_id, music_volume},
+    via `GET/PUT /ai-models/video-audio`.
+  - **The slideshow adds** an AI voiceover (the text chain writes the script in `primary_language`, and
+    OpenAI `gpt-4o-mini-tts` reads it) and/or the company's music.
+  - **Mixing** is two ffmpeg runs (audio WAV, then a mux). A failure never fails the video;
+    `CreativeResult.notes` → the job notes.
 - Worldwide company settings (SPEC-BE-072 + SPEC-FE-048, 2026-10-02):
   - `utils/locale_data.py` (Babel/CLDR + pytz) serves every country, currency, language and timezone through `GET /tenants/locale-options`. `PATCH /tenants/me` validates against it.
   - Sign-up takes the browser's timezone/country as hints: old zone names are mapped, unusable values dropped, and the currency follows the country.

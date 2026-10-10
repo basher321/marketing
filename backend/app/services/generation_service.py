@@ -328,6 +328,10 @@ def _finish(db: Session, job: GenerationJob, result: cp.CreativeResult) -> None:
         eff = dict(job.effective or {})
         eff.setdefault("aspect_ratio", (job.request or {}).get("aspect_ratio"))
         job.effective = eff
+    if result.notes:  # SPEC-BE-094: e.g. "Voiceover added (alloy)." or why there's no sound
+        eff = dict(job.effective or {})
+        eff["notes"] = [*list(eff.get("notes") or []), *result.notes]
+        job.effective = eff
     _attempt(job, result.provider, "succeeded")
     _link_content(db, job, str(media.id), None)
     write_audit_log(db, tenant_id=str(job.tenant_id), actor_user_id=None, action="generation.succeeded", resource_type="generation",

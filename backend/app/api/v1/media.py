@@ -37,7 +37,7 @@ async def upload(file: UploadFile = File(...), db: Session = Depends(get_db), us
 
 @router.get("/media", response_model=s.MediaList, status_code=status.HTTP_200_OK)
 def list_media(
-    kind: str | None = Query(default=None, pattern="^(image|video)$"),
+    kind: str | None = Query(default=None, pattern="^(image|video|audio)$"),
     source: str | None = Query(default=None, pattern="^(upload|ai_image|ai_video|catalog|derived)$"),
     q: str | None = Query(default=None, max_length=100),
     page: int = Query(default=1, ge=1, le=1000),

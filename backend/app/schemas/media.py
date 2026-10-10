@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict
 
 class MediaOut(BaseModel):
     id: str
-    kind: Literal["image", "video"]
+    kind: Literal["image", "video", "audio"]
     mime: str
     bytes: int
     width: int | None

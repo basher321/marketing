@@ -1,5 +1,6 @@
 /** Media library (SPEC-BE-074), mirroring app/schemas/media.py. */
-export type MediaKind = "image" | "video";
+// "audio" = background music for AI videos only (SPEC-BE-094); listed only with ?kind=audio.
+export type MediaKind = "image" | "video" | "audio";
 export type MediaSource = "upload" | "ai_image" | "ai_video" | "catalog" | "derived";
 
 export interface MediaItem {
