@@ -2,7 +2,7 @@
  * Command Chat API (SPEC-FE-008, SPEC-FE-041) against the backend's
  * app/api/v1/orchestrator.py.
  */
-import type { ChatMessage, PlanRead, SendMessageResult } from "../types/orchestrator";
+import type { ChatMessage, PlanRead, SendMessageResult, SpeechRead, TranscriptRead } from "../types/orchestrator";
 import { apiFetch } from "./client";
 
 const BASE = "/api/v1/orchestrator";
@@ -22,8 +22,9 @@ export function fetchMessages(): Promise<ChatMessage[]> {
  * plan (if any). Read/draft steps start right away in the background; the
  * plan card polls fetchPlan() for their status.
  */
-export function sendMessage(body: string): Promise<SendMessageResult> {
-  return apiFetch<SendMessageResult>(`${BASE}/messages`, { method: "POST", body: { body } });
+export function sendMessage(body: string, voice?: { language: string | null }): Promise<SendMessageResult> {
+  // SPEC-BE-095: `voice` marks a reviewed voice transcript; it is planned like typed text.
+  return apiFetch<SendMessageResult>(`${BASE}/messages`, { method: "POST", body: voice ? { body, voice } : { body } });
 }
 
 export function fetchPlan(id: string): Promise<PlanRead> {
@@ -44,4 +45,17 @@ export function retryPlanAction(planId: string, index: number): Promise<PlanRead
 /** "Start over": the next message is planned without the pending draft. */
 export function discardDraft(): Promise<void> {
   return apiFetch<void>(`${BASE}/draft/discard`, { method: "POST" });
+}
+
+/** A voice recording -> its text and language, on the company's own AI keys (SPEC-BE-095). */
+export function transcribeVoice(audio: Blob): Promise<TranscriptRead> {
+  const form = new FormData();
+  const ext = audio.type.includes("mp4") ? "m4a" : audio.type.includes("ogg") ? "ogg" : "webm";
+  form.append("audio", audio, `voice.${ext}`);
+  return apiFetch<TranscriptRead>(`${BASE}/voice/transcribe`, { method: "POST", body: form });
+}
+
+/** An AI reply read aloud in `language` (translated for speech when needed). */
+export function speakMessage(id: string, language: string | null): Promise<SpeechRead> {
+  return apiFetch<SpeechRead>(`${BASE}/messages/${encodeURIComponent(id)}/speech`, { method: "POST", body: { language } });
 }

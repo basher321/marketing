@@ -56,6 +56,10 @@ const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
   },
 ];
 
+// SPEC-FE-063: the top bar's ☰ button (a separate client component) opens the
+// drawer through this window event; no shared provider is needed.
+export const TOGGLE_NAV_EVENT = "shell:toggle-nav";
+
 function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
@@ -88,6 +92,28 @@ export default function Sidebar() {
   const logo = tenant.data?.branding.logo_url ?? null;
   const [openGroups, setOpenGroups] = useState<string[]>([]);
   useEffect(() => setOpenGroups(readOpenGroups()), []);
+  // Below 1024px the sidebar is a drawer (SPEC-FE-063): ☰ opens it; the
+  // backdrop, ✕, Escape or choosing a page closes it.
+  const [drawer, setDrawer] = useState(false);
+  useEffect(() => {
+    const toggle = () => setDrawer((v) => !v);
+    window.addEventListener(TOGGLE_NAV_EVENT, toggle);
+    return () => window.removeEventListener(TOGGLE_NAV_EVENT, toggle);
+  }, []);
+  useEffect(() => setDrawer(false), [pathname]);
+  useEffect(() => {
+    if (!drawer) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDrawer(false);
+    };
+    window.addEventListener("keydown", onKey);
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = overflow;
+    };
+  }, [drawer]);
   const toggleGroup = (href: string) =>
     setOpenGroups((prev) => {
       const next = prev.includes(href) ? prev.filter((h) => h !== href) : [...prev, href];
@@ -100,9 +126,26 @@ export default function Sidebar() {
     });
 
   return (
-    // Pinned to the viewport: the page scrolls, the sidebar stays put (its own
-    // list scrolls if it is taller than the screen).
-    <nav className="sticky top-0 flex h-screen flex-col gap-1 self-start overflow-y-auto bg-sidebar-bg px-3 py-5 text-sidebar-text">
+    <>
+      {drawer && (
+        <div
+          className="fixed inset-0 z-40 lg:hidden"
+          style={{ background: "color-mix(in srgb, var(--sidebar-bg) 60%, transparent)" }}
+          onClick={() => setDrawer(false)}
+          aria-hidden="true"
+          data-testid="sidebar-backdrop"
+        />
+      )}
+    {/* From 1024px: pinned to the viewport (the page scrolls, the sidebar stays
+        put; its own list scrolls if taller than the screen). Below: a drawer,
+        invisible to keyboard and screen readers while closed. */}
+    <nav
+      id="app-sidebar"
+      aria-label="Main navigation"
+      className={`fixed inset-y-0 left-0 z-50 flex h-screen w-[260px] flex-col gap-1 overflow-y-auto bg-sidebar-bg px-3 py-5 text-sidebar-text transition-[transform,visibility] duration-200 lg:sticky lg:top-0 lg:z-auto lg:w-auto lg:translate-x-0 lg:self-start ${
+        drawer ? "translate-x-0 shadow-2xl" : "max-lg:invisible max-lg:-translate-x-full"
+      }`}
+    >
       <div className="mb-3 flex items-center gap-[10px] border-b border-sidebar-hover px-3 pb-5 pt-2 text-base font-bold text-white">
         {logo ? (
           // A data: URL, so next/image optimisation doesn't apply.
@@ -114,9 +157,17 @@ export default function Sidebar() {
           </div>
         )}
         {/* Two-tone like the logo (SPEC-FE-043); sky-400 is the closest default to its blue. */}
-        <div>
+        <div className="flex-1">
           Pilot<span className="text-sky-400">Sonic</span>
         </div>
+        <button
+          type="button"
+          aria-label="Close menu"
+          onClick={() => setDrawer(false)}
+          className="rounded px-2 py-1 text-sm font-normal text-sidebar-text hover:bg-sidebar-hover hover:text-white lg:hidden"
+        >
+          ✕
+        </button>
       </div>
       {NAV_SECTIONS.map((section) => (
         <div key={section.title} className="contents">
@@ -175,5 +226,6 @@ export default function Sidebar() {
         </div>
       ))}
     </nav>
+    </>
   );
 }

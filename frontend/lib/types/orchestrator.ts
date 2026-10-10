@@ -28,6 +28,9 @@ export interface ChatMessage {
   plan_id: string | null;
   waiting_for: string[];
   results: ResultItem[];
+  /** SPEC-BE-095: a user message that came from a voice command. */
+  voice: boolean;
+  voice_language: string | null;
 }
 
 export type Module = "ecommerce" | "shipping" | "marketing" | "meta" | "organic" | "workflows" | "general";
@@ -77,4 +80,21 @@ export interface PlanRead {
 export interface SendMessageResult extends ChatMessage {
   reply: ChatMessage;
   plan: PlanRead | null;
+}
+
+/** POST /orchestrator/voice/transcribe (SPEC-BE-095). */
+export interface TranscriptRead {
+  text: string;
+  language: string | null;
+  provider: string;
+}
+
+/** POST /orchestrator/messages/{id}/speech: base64 audio plus the spoken text. */
+export interface SpeechRead {
+  audio: string;
+  mime: string;
+  text: string;
+  language: string | null;
+  provider: string;
+  note: string | null;
 }

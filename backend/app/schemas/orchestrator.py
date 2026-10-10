@@ -2,15 +2,22 @@
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
 
 # Leading/trailing whitespace is stripped first, so an empty or
 # whitespace-only body fails min_length=1 with a 422 before any write.
 MessageBody = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=8000)]
 
 
+class VoiceInfo(BaseModel):
+    """A voice command (SPEC-BE-095): the language the transcript was heard in."""
+
+    language: str | None = Field(default=None, max_length=12)
+
+
 class ChatMessageCreate(BaseModel):
     body: MessageBody
+    voice: VoiceInfo | None = None
 
 
 class ResultMedia(BaseModel):
@@ -43,6 +50,9 @@ class ChatMessage(BaseModel):
     plan_id: str | None = None
     waiting_for: list[str] = []
     results: list[ResultItem] = []
+    # SPEC-BE-095: a user message that came from a voice command.
+    voice: bool = False
+    voice_language: str | None = None
 
 
 class PlanAction(BaseModel):
@@ -90,3 +100,26 @@ class SendMessageResult(ChatMessage):
 
 class PlanActionEdit(BaseModel):
     params: dict[str, Any]
+
+
+class TranscriptRead(BaseModel):
+    """POST /orchestrator/voice/transcribe (SPEC-BE-095)."""
+
+    text: str
+    language: str | None
+    provider: str
+
+
+class SpeechRequest(BaseModel):
+    language: str | None = Field(default=None, max_length=12)
+
+
+class SpeechRead(BaseModel):
+    """POST /orchestrator/messages/{id}/speech: base64 audio plus the spoken text."""
+
+    audio: str
+    mime: str
+    text: str
+    language: str | None
+    provider: str
+    note: str | None = None

@@ -18,7 +18,7 @@ Status: IMPLEMENTED and verified 2026-10-02 (approved by the user). See **Execut
      - `X-Frame-Options: DENY`;
      - `X-Content-Type-Options: nosniff`;
      - `Referrer-Policy: strict-origin-when-cross-origin`;
-     - `Permissions-Policy: camera=(), microphone=(), geolocation=()`.
+     - `Permissions-Policy: camera=(), microphone=(self), geolocation=()` (microphone for this site only since SPEC-FE-062 Amendment A; it was `microphone=()`).
    - **Production only:**
      - `Strict-Transport-Security: max-age=31536000; includeSubDomains`;
      - a `Content-Security-Policy` allowing self, the API origin from `NEXT_PUBLIC_API_BASE_URL`, `data:`/`blob:` images and media, inline styles (used by the shell) and Next's inline scripts; `frame-ancestors 'none'`.

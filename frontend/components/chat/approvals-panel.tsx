@@ -16,7 +16,7 @@ function ago(iso: string): string {
   return `${Math.floor(minutes / 60)}h ago`;
 }
 
-// Pending Approvals panel (SPEC-FE-010), markup from the reference mockup.
+// Pending Approvals panel (SPEC-FE-010 behavior, SPEC-FE-061 look).
 // Shares the approvals key namespace with the chat plan card (SPEC-FE-009).
 export default function ApprovalsPanel() {
   const queryClient = useQueryClient();
@@ -38,23 +38,38 @@ export default function ApprovalsPanel() {
   });
 
   return (
-    <div className="approvals-panel">
-      <h3 className="mt-0 text-sm">Pending Approvals{query.data ? ` (${query.data.count})` : ""}</h3>
+    <aside className="cc-approvals" aria-label="Pending approvals">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="m-0 text-sm font-semibold">Pending Approvals</h3>
+        {query.data && query.data.count > 0 && <span className="cc-count">{query.data.count}</span>}
+      </div>
+      <p className="m-0 mt-1 text-[11.5px] text-muted">Changes and spending wait here for approval.</p>
       {query.isPending ? (
-        <p className="text-[13px] text-muted">Loading approvals…</p>
+        <div className="mt-3 grid gap-2">
+          <div className="cc-shimmer h-16" />
+          <div className="cc-shimmer h-16" />
+        </div>
       ) : query.isError ? (
         <p className="text-[13px] text-danger" role="alert">
           Failed to load approvals: {query.error.message}
         </p>
       ) : query.data.items.length === 0 ? (
-        <p className="text-[13px] text-muted">Nothing pending</p>
+        <div className="mt-6 grid justify-items-center gap-1 text-center text-[13px] text-muted">
+          <span className="cc-card-icon h-10 w-10 text-lg" aria-hidden="true">
+            ✓
+          </span>
+          Nothing pending
+        </div>
       ) : (
         query.data.items.map((item) => (
-          <div key={item.id} className="approval-item">
-            <div className="approval-title">{item.title}</div>
+          <div key={item.id} className="cc-approval">
+            <div className="text-[13px] font-medium">{item.title}</div>
             {/* The engine label is the backend's (SPEC-BE-020); items of no engine
                 (reply, plan, action) show only the time rather than a guessed label. */}
-            <div className="approval-meta">{item.engine ? `${item.engine} · ${ago(item.requested_at)}` : ago(item.requested_at)}</div>
+            <div className="mb-2 mt-1 flex flex-wrap items-center gap-1.5 text-[11.5px] text-muted">
+              {item.engine && <span className="badge badge-neutral">{item.engine}</span>}
+              {ago(item.requested_at)}
+            </div>
             <div className="approval-buttons">
               {/* No detail view or endpoint exists for "View" yet: present but inert. */}
               <button type="button" className="btn btn-secondary btn-sm">
@@ -77,6 +92,6 @@ export default function ApprovalsPanel() {
           {error}
         </p>
       )}
-    </div>
+    </aside>
   );
 }

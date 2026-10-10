@@ -200,3 +200,20 @@ spec justifies it.
   - **Controls:** the voiceover switch and voice, a music upload / pick / remove with an `<audio>` preview, and
     the volume.
   - **Media type:** `MediaKind` includes "audio", which only appears with `fetchMedia("audio")`.
+- Command Chat redesign + voice (SPEC-FE-061/062, 2026-10-10; **verified by a headless-Chrome E2E with a fake microphone, 18/18**):
+  - **Microphone:** `next.config.mjs` sends `Permissions-Policy: microphone=(self)`. It was `microphone=()`, which
+    blocked recording; restart the dev server after changing headers.
+  - **Results:** a finished plan's summary is fetched live by `plan-card.tsx`; it was only seen after a reload before.
+  - **Generative UI:** the backend's structured output picks the component (`kind`, `waiting_for`, plan, `results[].data`
+    shape → cards / chart / table, media). Code is in `components/chat/chat-panel.tsx`, with the plan timeline in
+    `plan-card.tsx`. Styles are the `.cc-*` classes in `globals.css` (tokens + `color-mix`); the mockup's `.chat-*` classes
+    are kept.
+  - **Voice:** `components/chat/voice.tsx` holds the MediaRecorder recorder + waveform, the transcript into the composer
+    with a language chip, the reply player (a queue: reply then summary; Listen interrupts; autoplay-blocked → "Tap to hear"), and the "Voice replies"
+    switch (`localStorage` `cc-voice-replies`, guarded).
+  - **Idle composer (SPEC-FE-061 Amendment A):** with no messages the composer is centred under the greeting, then moves
+    to the bottom on the first send. `.cc-header`/`.cc-composer-wrap` must not shrink, or the textarea is squeezed to
+    one line.
+- Responsive shell (SPEC-FE-063, 2026-10-10): from 1024 px the sidebar is the sticky 240 px column. Below it is a drawer
+  opened by the top bar's ☰ (window event `shell:toggle-nav`, `TOGGLE_NAV_EVENT` in `sidebar.tsx`). It closes on ✕, the
+  backdrop, Escape or a page change. Page padding is 16 px below 1024 px.

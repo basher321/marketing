@@ -219,6 +219,19 @@ section before trusting any model.
     OpenAI `gpt-4o-mini-tts` reads it) and/or the company's music.
   - **Mixing** is two ffmpeg runs (audio WAV, then a mux). A failure never fails the video;
     `CreativeResult.notes` → the job notes.
+- Command Chat voice + generative UI (SPEC-BE-095 + SPEC-FE-061/062, 2026-10-10):
+  - **Listen:** `POST /orchestrator/voice/transcribe` (multipart `audio`, at most 1.9 MB, detected by magic bytes) →
+    `{text, language, provider}`. It uses the company's own keys: OpenAI (text from `gpt-4o-mini-transcribe`; the language
+    from the script, else `whisper-1`, asked at the same time) → Groq `whisper-large-v3` → Gemini. Code is in
+    `ai/speech.py`; the audio is never stored. `whisper-1` alone wrote Bengali in Devanagari (Amendment A).
+  - **Send:** the transcript is reviewed in the composer, then `POST /orchestrator/messages {body, voice: {language}}`.
+    It is planned exactly like typed text, with `parsed_intent.voice` on the user message (`ChatMessage.voice` /
+    `voice_language`).
+  - **Speak:** `POST /orchestrator/messages/{id}/speech {language}` → JSON base64 audio. Non-English replies are
+    translated by the text chain and cached in `parsed_intent.voice_text`. Voices: OpenAI `gpt-4o-mini-tts` → Gemini
+    TTS (WAV). The stored reply text never changes.
+  - **Errors:** no key → 409, all providers failed → 503. `dev_fakes` answers OpenAI/Groq/Gemini speech
+    (`VOICE_TRANSCRIPT`).
 - Worldwide company settings (SPEC-BE-072 + SPEC-FE-048, 2026-10-02):
   - `utils/locale_data.py` (Babel/CLDR + pytz) serves every country, currency, language and timezone through `GET /tenants/locale-options`. `PATCH /tenants/me` validates against it.
   - Sign-up takes the browser's timezone/country as hints: old zone names are mapped, unusable values dropped, and the currency follows the country.

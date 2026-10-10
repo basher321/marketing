@@ -5,6 +5,8 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api/client";
 import { clearAuthToken, getRefreshToken } from "@/lib/auth/token";
 
+import { TOGGLE_NAV_EVENT } from "./sidebar";
+
 // Topbar (SPEC-FE-002), reproducing the mockup's .topbar/.search/.topbar-right/
 // .icon-btn/.avatar rules. The search input does nothing and the two icon
 // buttons have no click handler or dropdown; "RB" is fixed text, not derived
@@ -32,13 +34,23 @@ async function logout(): Promise<void> {
 
 export default function Topbar() {
   return (
-    <div className="flex items-center justify-between border-b border-border bg-panel px-6 py-3">
+    <div className="flex items-center justify-between gap-3 border-b border-border bg-panel px-4 py-3 lg:px-6">
+      {/* SPEC-FE-063: below 1024px the sidebar is a drawer this button opens. */}
+      <button
+        type="button"
+        aria-label="Open menu"
+        aria-controls="app-sidebar"
+        onClick={() => window.dispatchEvent(new Event(TOGGLE_NAV_EVENT))}
+        className="flex h-[34px] w-[34px] shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-panel text-text lg:hidden"
+      >
+        ☰
+      </button>
       <input
-        className="max-w-[420px] flex-1 rounded-md border border-border bg-bg px-3 py-2 text-text"
+        className="min-w-0 max-w-[420px] flex-1 rounded-md border border-border bg-bg px-3 py-2 text-text"
         placeholder="Search products, orders, campaigns..."
         aria-label="Search"
       />
-      <div className="flex items-center gap-3">
+      <div className="flex shrink-0 items-center gap-2 lg:gap-3">
         <button
           type="button"
           title="Notifications"

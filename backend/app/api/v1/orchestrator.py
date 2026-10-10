@@ -1,7 +1,7 @@
 """/orchestrator endpoints (Command Chat messages and plans)."""
 from typing import Any
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, File, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -13,7 +13,11 @@ from app.schemas.orchestrator import (
     PlanActionEdit,
     PlanRead,
     SendMessageResult,
+    SpeechRead,
+    SpeechRequest,
+    TranscriptRead,
 )
+from app.ai import speech
 from app.services import orchestrator_service
 
 router = APIRouter(prefix="/orchestrator", tags=["orchestrator"])
@@ -36,8 +40,37 @@ def send_message(
     current_user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
     return orchestrator_service.send_message_and_plan(
-        db, str(current_user.tenant_id), str(current_user.id), payload.body, current_user.role
+        db,
+        str(current_user.tenant_id),
+        str(current_user.id),
+        payload.body,
+        current_user.role,
+        voice=payload.voice is not None,
+        voice_language=speech.language_code(payload.voice.language) if payload.voice else None,
     )
+
+
+# Voice commands (SPEC-BE-095): the recording becomes text on the company's own
+# OpenAI / Groq / Gemini key; the chat then sends that text like a typed command.
+@router.post("/voice/transcribe", response_model=TranscriptRead, status_code=status.HTTP_200_OK)
+async def transcribe_voice(
+    audio: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    content = await audio.read(speech.MAX_AUDIO_BYTES + 1)
+    return speech.transcribe(db, str(current_user.tenant_id), content)
+
+
+# An AI reply read aloud in the voice command's language (SPEC-BE-095).
+@router.post("/messages/{message_id}/speech", response_model=SpeechRead, status_code=status.HTTP_200_OK)
+def speak_message(
+    message_id: str,
+    payload: SpeechRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    return orchestrator_service.speak_message(db, str(current_user.tenant_id), message_id, payload.language)
 
 
 @router.get("/plans/{plan_id}", response_model=PlanRead, status_code=status.HTTP_200_OK)

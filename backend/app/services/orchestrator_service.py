@@ -90,6 +90,9 @@ def _structured(message: OrchestratorMessage) -> dict[str, Any]:
         out["waiting_for"] = info.get("missing_labels") or []
     if kind == "summary":
         out["results"] = info.get("results") or []
+    voice = info.get("voice") if message.role == "user" else None
+    if isinstance(voice, dict):  # SPEC-BE-095
+        out["voice"], out["voice_language"] = True, voice.get("language")
     return out
 
 
@@ -118,13 +121,18 @@ def list_messages(db: Session, tenant_id: str) -> list[dict[str, Any]]:
     return [_to_chat_message(m) for m in messages]
 
 
-def send_user_message(db: Session, tenant_id: str, user_id: str, body: str) -> dict[str, Any]:
+def send_user_message(
+    db: Session, tenant_id: str, user_id: str, body: str, voice_language: str | None = None, voice: bool = False
+) -> dict[str, Any]:
     message = OrchestratorMessage(
         tenant_id=tenant_id,
         user_id=user_id,
         role="user",
         content=body,
         correlation_id=str(uuid.uuid4()),
+        # A voice command (SPEC-BE-095) is marked here; it is planned exactly
+        # like typed text.
+        parsed_intent={"voice": {"language": voice_language}} if voice else None,
     )
     db.add(message)
     db.commit()
@@ -466,11 +474,19 @@ def _plan_reply(actions: list[dict[str, Any]], dropped: list[ca.Dropped], left_o
     return "\n".join(lines)
 
 
-def send_message_and_plan(db: Session, tenant_id: str, user_id: str, body: str, role: str = "viewer") -> dict[str, Any]:
+def send_message_and_plan(
+    db: Session,
+    tenant_id: str,
+    user_id: str,
+    body: str,
+    role: str = "viewer",
+    voice: bool = False,
+    voice_language: str | None = None,
+) -> dict[str, Any]:
     # Ids go into jsonb (plan actions, approval payloads): plain strings only,
     # never uuid.UUID (live-DB verification 2026-10-01).
     tenant_id, user_id = str(tenant_id), str(user_id)
-    user_message = send_user_message(db, tenant_id, user_id, body)
+    user_message = send_user_message(db, tenant_id, user_id, body, voice_language, voice)
     correlation_id = str(
         db.query(OrchestratorMessage.correlation_id)
         .filter(OrchestratorMessage.id == user_message["id"], OrchestratorMessage.tenant_id == tenant_id)
@@ -998,6 +1014,97 @@ def _finalize(db: Session, plan: OrchestratorPlan, actions: list[dict[str, Any]]
         resource_id=str(plan.id),
         metadata={"status": plan.status, "steps": {a["index"]: a["status"] for a in actions}},
     )
+
+
+# ---------------------------------------------------------------------------
+# Voice replies (SPEC-BE-095)
+# ---------------------------------------------------------------------------
+_SPEECH_MAX_CHARS = 1200
+_URL = re.compile(r"https?://\S+")
+_UUID = re.compile(r"\(?\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b\)?", re.IGNORECASE)
+_SPEECH_SYSTEM = (
+    "You translate a business assistant's chat reply so it can be read aloud. Keep every fact, number, name, "
+    "amount and step number, keep it short and natural to listen to, and use no markdown, bullets, emojis or "
+    "URLs. Reply with the translated text only."
+)
+
+
+def _speakable(text: str) -> str:
+    """Chat text -> plain speech: no list markers, URLs or ids, at most 1,200 characters."""
+    lines = []
+    for raw in text.splitlines():
+        line = re.sub(r"^\s*[-*•]\s+", "", raw)
+        line = _UUID.sub("", _URL.sub("", line)).replace("**", "").replace("`", "")
+        line = " ".join(line.split())
+        if line:
+            lines.append(line if line[-1] in ".:!?।" else f"{line}.")
+    spoken = " ".join(lines)
+    if len(spoken) > _SPEECH_MAX_CHARS:
+        spoken = spoken[:_SPEECH_MAX_CHARS].rsplit(" ", 1)[0] + " …and more on screen."
+    return spoken
+
+
+def speak_message(db: Session, tenant_id: str, message_id: str, language: str | None) -> dict[str, Any]:
+    """An AI reply read aloud in `language` (the voice command's). The reply is
+    translated for speech by the company's AI text chain when the language
+    isn't English, and the translation is kept in parsed_intent.voice_text so
+    a replay only costs the voice. The stored reply text never changes."""
+    import base64
+
+    from app.ai import speech
+
+    try:
+        uuid.UUID(str(message_id))
+    except ValueError:
+        raise NotFoundError("Message not found.") from None
+    message = (
+        db.query(OrchestratorMessage)
+        .filter(
+            OrchestratorMessage.id == str(message_id),
+            OrchestratorMessage.tenant_id == str(tenant_id),
+            OrchestratorMessage.role.in_(("assistant", "ai")),
+        )
+        .first()
+    )
+    if message is None:
+        raise NotFoundError("Message not found.")
+    lang = speech.language_code(language)
+    text, note = _speakable(message.content), None
+    if lang and lang != "en" and text:
+        info = dict(message.parsed_intent) if isinstance(message.parsed_intent, dict) else {}
+        cached = (info.get("voice_text") or {}).get(lang)
+        if cached:
+            text = str(cached)
+        else:
+            try:
+                out = llm_client.complete_with_usage(
+                    _SPEECH_SYSTEM,
+                    f"Translate into {speech.language_name(lang)} (ISO {lang}):\n<reply>\n{text}\n</reply>",
+                    800,
+                    60.0,
+                    db=db,
+                    tenant_id=str(tenant_id),
+                )
+                if out.is_mock or not out.text.strip():
+                    raise LLMProviderError("No AI model is configured.")
+                text = _speakable(out.text)
+                info["voice_text"] = {**(info.get("voice_text") or {}), lang: text}
+                message.parsed_intent = info
+                flag_modified(message, "parsed_intent")
+                db.commit()
+            except LLMProviderError:
+                note = f"The reply couldn't be translated into {speech.language_name(lang)}, so it is read as written."
+    if not text:
+        raise AppError("This message has nothing to read aloud.", 422)
+    audio = speech.speak(db, str(tenant_id), text, lang)
+    return {
+        "audio": base64.b64encode(audio["audio"]).decode(),
+        "mime": audio["mime"],
+        "text": text,
+        "language": lang,
+        "provider": audio["provider"],
+        "note": note,
+    }
 
 
 def require_manager(role: str) -> None:

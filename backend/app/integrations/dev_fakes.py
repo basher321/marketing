@@ -704,10 +704,24 @@ def _embedding_api(request: httpx.Request, path: str) -> httpx.Response:
     return _json({"error": {"message": f"Fake embeddings API: unknown path {path}"}}, 404)
 
 
+# Voice commands (SPEC-BE-095): every speech-to-text fake answers this
+# transcript (tests may change it); text-to-speech answers a short MP3 / PCM.
+VOICE_TRANSCRIPT: dict[str, str] = {"text": "Show products low on stock", "language": "english"}
+FAKE_MP3 = b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\xff\xfb\x90\x00" * 400
+
+
+def _whisper_fake(request: httpx.Request, path: str) -> httpx.Response:
+    return _json({"text": VOICE_TRANSCRIPT["text"], "language": VOICE_TRANSCRIPT["language"], "duration": 2.0})
+
+
 def _openai(request: httpx.Request, path: str) -> httpx.Response:
-    """Sora (/v1/videos), image generation/edit and embeddings fakes."""
+    """Sora (/v1/videos), image generation/edit, embeddings and voice fakes."""
     import base64
 
+    if path == "/v1/audio/transcriptions":
+        return _whisper_fake(request, path)
+    if path == "/v1/audio/speech":
+        return httpx.Response(200, content=FAKE_MP3, headers={"content-type": "audio/mpeg"})
     if path == "/v1/embeddings":
         body = _body(request) or {}
         dims = int(body.get("dimensions") or 768)
@@ -749,6 +763,15 @@ def _gemini(request: httpx.Request, path: str) -> httpx.Response:
         return _json({"name": op, "done": True, "response": {"generateVideoResponse": {"generatedSamples": [{"video": {"uri": uri}}]}}})
     if path.startswith("/v1beta/files/"):
         return httpx.Response(200, content=fake_mp4(8, 720, 1280), headers={"content-type": "video/mp4"})
+    if path.endswith("-tts:generateContent"):  # SPEC-BE-095 voice reply: 16-bit PCM
+        import base64
+
+        pcm = base64.b64encode(b"\x00\x01" * 4800).decode()
+        return _json({"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "audio/L16;rate=24000", "data": pcm}}]}}]})
+    parts = (((_body(request) or {}).get("contents") or [{}])[0].get("parts")) or []
+    if any(isinstance(p_, dict) and p_.get("inline_data") for p_ in parts):  # SPEC-BE-095 transcription
+        text = json.dumps({"text": VOICE_TRANSCRIPT["text"], "language": "bn" if VOICE_TRANSCRIPT["language"] == "bengali" else "en"})
+        return _json({"candidates": [{"content": {"parts": [{"text": text}]}}]})
     return _gemini_image(request, path)
 
 
@@ -1195,6 +1218,7 @@ _AD_HOSTS = (
     ("api.social-api.ai", "socialapi", _socialapi),
     ("generativelanguage.googleapis.com", "gemini", _gemini),
     ("api.openai.com", "openai", _openai),
+    ("api.groq.com", "groq", _whisper_fake),  # SPEC-BE-095 voice transcription
     ("api.voyageai.com", "voyage", _embedding_api), ("api.mistral.ai", "mistral", _embedding_api),
     ("api.cohere.com", "cohere", _embedding_api),
     ("open.tiktokapis.com", "tiktok_organic", _tiktok_organic), ("open-upload.tiktokapis.com", "tiktok_organic", _tiktok_organic),
@@ -1217,6 +1241,7 @@ _FAIL_ANSWER = {
     "tiktok_organic": lambda: _json({"data": {}, "error": {"code": "spam_risk_too_many_posts", "message": "Fake TikTok: rejected by the injected failure"}}, 403),
     "openai": lambda: _json({"error": {"message": "Fake OpenAI: rejected by the injected failure"}}, 400),
     "gemini": lambda: _json({"error": {"message": "Fake Gemini: rejected by the injected failure"}}, 400),
+    "groq": lambda: _json({"error": {"message": "Fake Groq: rejected by the injected failure"}}, 400),
     "voyage": lambda: _json({"detail": "Fake Voyage: rejected by the injected failure"}, 400),
     "mistral": lambda: _json({"message": "Fake Mistral: rejected by the injected failure"}, 400),
     "cohere": lambda: _json({"message": "Fake Cohere: rejected by the injected failure"}, 400),

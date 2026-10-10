@@ -18,7 +18,8 @@ function securityHeaders() {
     { key: "X-Frame-Options", value: "DENY" },
     { key: "X-Content-Type-Options", value: "nosniff" },
     { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-    { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+    // Microphone for this site only: Command Chat voice commands (SPEC-FE-062).
+    { key: "Permissions-Policy", value: "camera=(), microphone=(self), geolocation=()" },
   ];
   if (isProd) {
     const api = apiOrigin();
