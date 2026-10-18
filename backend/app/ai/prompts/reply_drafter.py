@@ -247,7 +247,7 @@ def generate_reply_draft(
         tenant_id=tenant_id,
     )
     if completion.is_mock:
-        raise LLMProviderError("No AI model is configured; cannot draft a reply. Add one in Integrations › AI Models.")
+        raise LLMProviderError("PilotSonic's AI isn't set up yet; cannot draft a reply. The Super admin adds the AI keys.")
     reply, tags = _parse_reply(completion.text)
 
     # Sources actually used = retrieved sources whose tag the reply cites.

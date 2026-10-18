@@ -192,10 +192,10 @@ def _text_ai(db: Session, tenant_id: str) -> dict[str, Any]:
             return {"ready": True, "models": models, "reason": None}
         return {"ready": False, "models": models,
                 "reason": "Every AI model you enabled failed its last call (" + "; ".join(f"{p['label']}: {str(p['last_error'])[:120]}" for p in enabled)
-                          + "). Fix the model name or key in Integrations › AI Models and click Save & test."}
+                          + "). PilotSonic's AI is unavailable right now; tell the Super admin if it keeps failing."}
     if llm_client.provider == "fixture" or listed["env_fallback"]["configured"]:
         return {"ready": True, "models": [{"provider": "server", "label": "Server default", "model": llm_client.model, "last_error": None}], "reason": None}
-    return {"ready": False, "models": [], "reason": "No AI model is set up. Add Claude, GPT, Gemini or Groq in Integrations › AI Models."}
+    return {"ready": False, "models": [], "reason": "PilotSonic's AI isn't set up yet (the Super admin adds the keys)."}
 
 
 def _image_ai(db: Session, tenant_id: str) -> dict[str, Any]:
@@ -210,16 +210,16 @@ def _image_ai(db: Session, tenant_id: str) -> dict[str, Any]:
             label = "OpenAI images" if provider == "openai" else "Gemini images"
             # A saved key and a chosen image model are all we can check without
             # a paid image call (SPEC-BE-070 amendment 2026-10-02).
-            if saved and saved["key_masked"] and saved["image_model"]:
-                sources.append({"key": key.key, "label": label, "note": f"{saved['image_model']} with your saved key"})
-            elif saved and saved["key_masked"]:
+            if saved and saved["has_key"] and saved["image_model"]:
+                sources.append({"key": key.key, "label": label, "note": f"{saved['image_model']} with PilotSonic's key"})
+            elif saved and saved["has_key"]:
                 no_model.append(saved["label"])
         elif key.available(db, tenant_id):
             sources.append({"key": key.key, "label": key.key.replace("mcp:", "MCP: "), "note": "MCP creative tool"})
     reason = None
     if not sources:
-        reason = (f"Choose an image model for {' or '.join(no_model)} in Integrations › AI Models." if no_model else
-                  "No image source is set up: save an OpenAI or Gemini key and choose an image model in Integrations › AI Models, or add an MCP image tool.")
+        reason = (f"PilotSonic has no image model chosen for {' or '.join(no_model)} yet (the Super admin chooses it)." if no_model else
+                  "PilotSonic's image generation isn't set up yet (the Super admin adds an OpenAI or Gemini key with an image model).")
     return {"ready": bool(sources), "sources": sources, "reason": reason}
 
 

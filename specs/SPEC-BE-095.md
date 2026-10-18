@@ -116,3 +116,78 @@ in 6.0 s; Groq's saved key is invalid (401).
 - **AC5:** the Bengali sentence through the real OpenAI step → exact text and `bn`. A headless Chrome with a fake microphone
   playing that sentence goes through the page: mic → transcript in the composer with "Bengali" → Send → plan → spoken
   Bengali reply.
+
+## Amendment B (2026-10-10): "Voice commands need an OpenAI, Groq or Gemini key" with OpenAI set up
+
+Reported by the user (Firefox; "we have openai model"). **Cause:** not the browser. The user was signed in as
+abc@pilotsonic.com in a second company, **pilotsonic1**, which had no AI models; the keys were saved in **pilotsonic**
+(abc@gmail.com). AI keys are per company (SPEC-BE-088), so pilotsonic1 had none.
+
+**Fix:**
+- At the user's choice, pilotsonic's AI Models settings (the same encrypted keys, models and order) were copied into
+  pilotsonic1, with an `ai_models.copied` audit entry. A real voice test there gave "আমার পণ্যগুলো দেখাও।" (bn, OpenAI).
+- The 409 messages now name the signed-in company: "Each company has its own AI models, and <company> has none set up
+  yet."
+- SPEC-BE-095's checks pass 27/27; ruff 1 / mypy 7.
+
+## Amendment C (2026-10-10): the reply language — the spoken one, or the one asked for
+
+Asked: "language is not comming bagla. instead of bangla it use hindi why. iput language will for output language or if
+user ask any special then said language will be."
+
+**Cause** (the stored message, pilotsonic1): the voice message was transcribed correctly as "Hello, what's your name?
+তোমার নাম কী?", but stored as language `ur`. Two reasons:
+- Bengali letters were less than half of the letters (mixed with English), so the script rule didn't apply.
+- The fallback, Whisper's language guess, said Urdu, though the transcript has no Arabic-script letters. The reply was
+  then spoken in Urdu, which sounds like Hindi.
+
+**FR5 (choosing the language of what was said, `ai/speech.py`):**
+- **`script_language`:** a language with its own script (Bengali, Gurmukhi, Thai, Korean…) wins when it is 3+ letters and at
+  least a fifth of the letters, so mixed Bengali + English is Bengali.
+- **`consistent`:** Whisper's guess is used only when the transcript fits it. A language with its own script needs letters
+  of that script ("Urdu" with no Arabic letters is refused). All-Latin text is romanized speech, which keeps the guess.
+- **`pick_language`:** the script; else the guess when it fits; else the first hint that fits. Two refinements:
+  - All-Latin text that reads as English (common English words, `_looks_english`) is English, whatever the guess:
+    "Show products low on stock" was guessed as Urdu.
+  - Romanized speech guessed as a language the company doesn't use becomes the company's own non-Latin language ("Amar
+    product gulo dekhao" in Bangladesh is Bengali, not Whisper's Hindi).
+- **`language_hints`** (best first, at most 3):
+  1. a saved brand language (the brand helper's built-in `en` default doesn't count);
+  2. the national languages (official / de facto official, or 25%+) of the company timezone's country;
+  3. the browser's languages (the `languages` form field, from `navigator.languages`);
+  4. the national languages of the registered country;
+  5. English, last.
+  - **Results:** pilotsonic1 (Asia/Dhaka, registered as US) → `bn, en`; pilotsonic (Los Angeles) → `en`. US Spanish is
+    only "official_regional", so it isn't a hint.
+- **The hints steer transcription, never force it:** `gpt-4o-mini-transcribe` (and `whisper-1`) get a prompt: "The speaker
+  may talk in Bangla or English, and may mix them. Write every word in the script of the language it was spoken in…".
+  - Measured on the same recording, 3 runs each: exact with no prompt, with this hint and with a short hint (3/3 each),
+    so the hint doesn't hurt accuracy.
+- **Logging:** each result is logged as `voice_language_picked` (provider, detected, picked, hints), never the audio or
+  the text.
+
+**FR6 (the asked-for reply language):** `requested_language(text, spoken)` finds an explicit request:
+- **Forms:** "reply/answer/speak/tell … in English", a trailing "… in English (please)", Bengali "ইংরেজিতে বলো" /
+  "বাংলায় উত্তর দাও" / "ইংলিশে বলো", Hindi "हिंदी में बोलो", Urdu "اردو میں جواب دیں".
+- **Names:** come from CLDR in English, Bengali, Hindi, Urdu, Arabic and the speaker's language, plus aliases (Bangla,
+  Bengali, हिंदी, ইংলিশ…).
+- **Content requests aren't reply requests:** a trailing "in <language>" doesn't count when the message makes content
+  (write / create / post / description / listing / ad…), so "write the posts in Spanish" isn't one. "Create an English
+  description" isn't one either.
+- **Storage:** `send_user_message` stores it as `parsed_intent.reply_language`, and `ChatMessage.reply_language` returns
+  it. The chat speaks replies in it, else in the spoken language.
+- **Unchanged:** the displayed reply text (only speech is translated, with its caption), the planner, the guards and
+  every other route.
+
+**Verified (2026-10-10):**
+- **Language choice:** 15 request phrases and 9 language-choice cases give the expected result (including your sentence →
+  `bn`, Whisper "urdu" for English → `en`, romanized Bengali → `bn`, Arabic → `ur`).
+- **Real audio** (pilotsonic1's own keys, OpenAI TTS → the transcribe route with `languages=en-US,en`, rolled back): 7/7.
+  - Your mixed sentence → `bn`, exact; an English sentence → `en`; "আমার পণ্যগুলো দেখাও" → `bn`, exact.
+  - "…, ইংরেজিতে বলো" → `reply_language` `en`; "… reply in Bangla" → `bn`; plain → none; it survives a reload.
+- **Regressions:** SPEC-BE-095 checks 27/27; the Command Chat golden set 31/31; the browser voice test on the live app
+  18/18 twice. (One run had one word blurred by Chrome's mic pipeline; the next two were exact.)
+- **Baseline:** ruff 1 / mypy 7.
+
+**Target files:** `ai/speech.py`, `api/v1/orchestrator.py` (the `languages` form field), `services/orchestrator_service.py`
+(`reply_language`), `schemas/orchestrator.py`.

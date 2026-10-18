@@ -18,11 +18,14 @@ function ago(iso: string): string {
 
 // Pending Approvals panel (SPEC-FE-010 behavior, SPEC-FE-061 look).
 // Shares the approvals key namespace with the chat plan card (SPEC-FE-009).
-export default function ApprovalsPanel() {
+export default function ApprovalsPanel({ collapsible = false }: { collapsible?: boolean } = {}) {
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey: approvalKeys.pending, queryFn: fetchPendingApprovals });
   const record = useRecordDecisions();
   const [error, setError] = useState<string | null>(null);
+  // Below the chat history it folds away, open by default when something waits (SPEC-FE-066).
+  const [openState, setOpenState] = useState<boolean | null>(null);
+  const open = !collapsible || (openState ?? (query.data?.count ?? 0) > 0);
 
   const approve = useMutation({
     mutationFn: (id: string) => approveApproval(id),
@@ -40,9 +43,17 @@ export default function ApprovalsPanel() {
   return (
     <aside className="cc-approvals" aria-label="Pending approvals">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="m-0 text-sm font-semibold">Pending Approvals</h3>
+        {collapsible ? (
+          <button type="button" className="cc-fold" aria-expanded={open} onClick={() => setOpenState(!open)}>
+            <span aria-hidden="true">{open ? "▾" : "▸"}</span> Pending Approvals
+          </button>
+        ) : (
+          <h3 className="m-0 text-sm font-semibold">Pending Approvals</h3>
+        )}
         {query.data && query.data.count > 0 && <span className="cc-count">{query.data.count}</span>}
       </div>
+      {open && (
+      <>
       <p className="m-0 mt-1 text-[11.5px] text-muted">Changes and spending wait here for approval.</p>
       {query.isPending ? (
         <div className="mt-3 grid gap-2">
@@ -91,6 +102,8 @@ export default function ApprovalsPanel() {
         <p className="mb-0 mt-2 text-xs text-danger" role="alert">
           {error}
         </p>
+      )}
+      </>
       )}
     </aside>
   );

@@ -41,7 +41,7 @@ VIDEO_TIMEOUT_S = 600
 STALE_AFTER = timedelta(minutes=2)
 LABELS = {"openai_image": "OpenAI images", "gemini_image": "Gemini images", "gemini_video": "Google Veo", "openai_video": "OpenAI Sora",
           "openai_slideshow": "OpenAI slideshow"}
-SETUP_HINT = "Choose an image or video model for OpenAI or Gemini in Integrations › AI Models (or add an MCP creative tool)."
+SETUP_HINT = "PilotSonic's image / video generation isn't set up yet (the Super admin chooses an OpenAI or Gemini model)."
 
 
 def _now() -> datetime:
@@ -117,7 +117,7 @@ def readiness(db: Session, tenant_id: str) -> dict[str, Any]:
             ratios = list(getattr(p, "RATIOS", ()) or getattr(p, "SIZES", {}) or ())
             out[kind].append({
                 "key": p.key, "label": LABELS.get(p.key, p.key.replace("mcp:", "MCP: ")), "ready": ready,
-                "reason": None if ready else ("Save a key and choose a model in AI Models." if base in ("openai", "gemini") else "Turned off or not set up."),
+                "reason": None if ready else ("Not set up in PilotSonic yet (the Super admin)." if base in ("openai", "gemini") else "Turned off or not set up."),
                 "model": model, "durations": durations, "aspect_ratios": [str(r) for r in ratios],
                 "reference_images": p.key in ("openai_image", "gemini_image", "gemini_video", "openai_video"),
             })
@@ -194,6 +194,9 @@ def start(db: Session, tenant_id: str, actor: str | None, kind: str, req: dict[s
     job ids are in jobs_started (photo count > 1)."""
     if kind not in ("image", "video"):
         raise AppError("Unknown generation kind.", 422)
+    from app.services import platform_service
+
+    platform_service.require(tenant_id, "ai", db)  # SPEC-BE-103
     req = _normalise(kind, req)
     prompt = str(req.get("prompt") or "").strip()
     if len(prompt) < 3:
@@ -210,7 +213,7 @@ def start(db: Session, tenant_id: str, actor: str | None, kind: str, req: dict[s
     ready = _providers(db, tenant_id, kind, req.get("providers"))
     if not ready:
         what = "a video" if kind == "video" else "an image"
-        raise ConflictError(f"Set up {what} model in Integrations › AI Models first.")
+        raise ConflictError(f"PilotSonic's {what.split()[-1]} model isn't set up yet (the Super admin sets it up).")
     _cost_guard(db, tenant_id, _estimate(kind, req, count, ready))
     if organic_content_id:
         req["organic_content_id"] = organic_content_id
@@ -262,14 +265,21 @@ def _creative_request(db: Session, job: GenerationJob) -> cp.CreativeRequest:
         prompt += " Featuring: " + "; ".join(f"{r['title']} ({r['description'][:120]})" for r in rows)
     if job.kind == "image" and req.get("style"):
         prompt += f" Style: {req['style']}."
-    if job.kind == "image":
+    # Creative requirements from Command Chat (SPEC-BE-098 FR4).
+    for key, label in (("audience", "Made for"), ("background", "Background"), ("mood", "Mood")):
+        if req.get(key):
+            prompt += f" {label}: {req[key]}."
+    if req.get("text_overlay"):
+        prompt += f' Show this text clearly: "{req["text_overlay"]}". No other text, no logos, no watermarks.'
+    elif job.kind == "image":
         prompt += " No text, no logos, no watermarks."
     references: list[tuple[bytes, str]] = []
     for m in media_service.media_rows(db, tenant_id, [str(i) for i in req.get("reference_media_ids") or []]):
         references.append((media_service.read_bytes(m), m.mime))
+    audio = {k: req[k] for k in ("voiceover", "music_media_id", "voiceover_text") if req.get(k) is not None}
     return cp.CreativeRequest(kind=job.kind, prompt=prompt.strip(), aspect_ratio=req.get("aspect_ratio"), skus=skus,
                               duration_s=req.get("duration_s"), style=req.get("style") if job.kind == "video" else None,
-                              negative_prompt=req.get("negative_prompt"), reference_images=references)
+                              negative_prompt=req.get("negative_prompt"), reference_images=references, audio=audio)
 
 
 def _notes(req: dict[str, Any], eff: dict[str, Any], provider: str) -> list[str]:

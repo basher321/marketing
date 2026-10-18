@@ -219,9 +219,14 @@ def _record_failed_attempt(db: Session, user_id: str, now: datetime) -> None:
 # (replaced_by = the new row) and issues a new pair. Presenting an already-revoked token is a
 # reuse signal (the token was copied): every active refresh token of that user is revoked.
 # Tokens issued before this change have no row, so those sessions must sign in again once.
+# Grace window (2026-10-11): two browser tabs refreshing in the same instant both present the
+# same token; the loser is a race, not a theft. A token rotated (replaced_by set, not a logout)
+# less than REUSE_GRACE ago is refused with 401 but revokes nothing; the tab then picks up the
+# pair the winning tab stored. Any later reuse still revokes the whole family.
 # Access tokens stay stateless and expire on their own (JWT_ACCESS_TOKEN_EXPIRE_MINUTES).
 # ---------------------------------------------------------------------------
 REFRESH_INVALID = "Invalid or expired refresh token."
+REUSE_GRACE = timedelta(seconds=30)
 _refresh_tokens = table(
     "refresh_tokens",
     column("id"), column("user_id"), column("tenant_id"), column("token_hash"),
@@ -263,12 +268,16 @@ def refresh(
     row = db.execute(
         select(
             _refresh_tokens.c.id, _refresh_tokens.c.user_id, _refresh_tokens.c.revoked_at,
-            _refresh_tokens.c.expires_at,
+            _refresh_tokens.c.expires_at, _refresh_tokens.c.replaced_by,
         )
         .where(_refresh_tokens.c.token_hash == token_hash)
         .with_for_update()
     ).first()
     if row is None or str(row.user_id) != str(payload.get("sub")):
+        raise UnauthorizedError(REFRESH_INVALID)
+    if row.revoked_at is not None and row.replaced_by is not None and now - row.revoked_at <= REUSE_GRACE:
+        # A concurrent refresh from another tab of the same browser (see the grace window above).
+        logger.info("auth.refresh_token_race", user_id=str(row.user_id))
         raise UnauthorizedError(REFRESH_INVALID)
     if row.revoked_at is not None:
         # Reuse of a rotated or revoked token: treat the whole session family as stolen.

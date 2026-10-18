@@ -106,3 +106,8 @@ and make it multiline it shows one line all text."
   - **Voice regression:** 18/18 still pass.
 - **AC5:** an empty chat shows the composer vertically centred; after sending it is at the bottom. A long message plus a
   Shift+Enter line shows as 3+ lines.
+
+## Amendment B (2026-10-10): the assistant's name
+
+Asked: "you can change AI Orchestrator as PilotSonic in command chat." The chat header's name is now **PilotSonic** (the
+product name, as in the sidebar). Only that label changes.

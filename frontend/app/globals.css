@@ -410,5 +410,91 @@ button.cc-chip:disabled { opacity: .5; cursor: not-allowed; }
   .cc-approvals { max-height: 70vh; }
 }
 
+/* Chat attachments (SPEC-FE-064) and the job board (SPEC-FE-065). Token colors only. */
+.cc-attach-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; max-height: 160px; overflow-y: auto; }
+.cc-attach { display: flex; align-items: center; gap: 8px; min-width: 0; width: 240px; max-width: 100%; padding: 6px 8px; border-radius: 12px; border: 1px solid var(--border); background: var(--panel); }
+.cc-attach.is-error { border-color: color-mix(in srgb, var(--danger) 50%, var(--border)); }
+.cc-attach-sent { width: 100%; background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
+.cc-attach-icon { display: grid; place-items: center; width: 34px; height: 34px; flex-shrink: 0; border-radius: 8px; background: var(--bg); font-size: 18px; }
+.cc-attach-thumb { width: 34px; height: 34px; flex-shrink: 0; border-radius: 8px; object-fit: cover; background: var(--bg); display: block; }
+.cc-attach-bar { height: 4px; margin-top: 4px; border-radius: 999px; background: var(--bg); overflow: hidden; }
+.cc-attach-bar > span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--chart-1), var(--chart-2)); transition: width .2s ease; }
+.cc-drop-overlay { position: absolute; inset: 0; z-index: 20; display: grid; place-items: center; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(2px); border: 2px dashed var(--accent); border-radius: 16px; pointer-events: none; }
+.cc-drop-box { text-align: center; padding: 20px 28px; border-radius: 16px; background: var(--panel); box-shadow: var(--shadow); }
+.cc-progress-line { align-self: flex-start; font-size: 12px; color: var(--muted); padding: 4px 10px; border-radius: 999px; background: var(--bg); border: 1px solid var(--border); }
+.cc-progress-line.is-fail { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
+
+.cc-board { padding: 14px 16px; }
+.cc-group { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--panel); }
+.cc-group-head { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: none; background: var(--bg); color: var(--text); cursor: pointer; text-align: left; }
+.cc-group-head:hover { background: color-mix(in srgb, var(--accent) 6%, var(--bg)); }
+.cc-item-thumb { width: 32px; height: 32px; flex-shrink: 0; border-radius: 8px; object-fit: cover; display: block; background: var(--panel); }
+.cc-item-ph { display: grid; place-items: center; font-size: 14px; color: var(--muted); border: 1px solid var(--border); }
+.cc-job { display: flex; align-items: flex-start; gap: 8px; padding: 7px 8px; border-radius: 10px; transition: background .2s; }
+.cc-job:hover { background: var(--bg); }
+.cc-job.is-need { background: color-mix(in srgb, var(--warn) 8%, var(--panel)); }
+.cc-job.is-flash { animation: cc-flash 1.6s ease-out; }
+.cc-job-icon { display: grid; place-items: center; width: 24px; height: 24px; flex-shrink: 0; border-radius: 7px; border: 1px solid var(--border); font-size: 12px; background: var(--panel); }
+.cc-job-form { display: grid; gap: 8px; margin-top: 8px; padding: 10px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg); }
+.cc-job-form input, .cc-job-form textarea, .cc-job-form select, .cc-mini-select, .cc-mini-input {
+  border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); padding: 5px 8px; font: inherit; font-size: 12.5px; min-width: 0;
+}
+.cc-job-form textarea { resize: vertical; }
+.cc-job-form input[type="radio"] { padding: 0; }
+.cc-need span { color: var(--warn); }
+.cc-need input, .cc-need textarea { border-color: var(--warn); }
+.cc-submit-sheet { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 5%, var(--panel)); }
+.cc-mini-input { width: 160px; }
+@keyframes cc-flash { 0% { background: color-mix(in srgb, var(--accent) 22%, transparent); } 100% { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .cc-job.is-flash { animation: none; } }
+/* Rows are grid items: without min-width 0 a long one-line description widens the whole column. */
+.cc-job { overflow-wrap: anywhere; min-width: 0; }
+.cc-group, .cc-board { min-width: 0; }
+@media (max-width: 900px) {
+  .cc-attach { width: 100%; }
+  .cc-mini-input { width: 100%; }
+  /* Wide cards (job board, plan, results) take the whole row on phones. */
+  .cc-stack.wide { width: auto; max-width: 100%; flex: 1 1 auto; }
+  .cc-board { padding: 10px; }
+  .cc-job { padding: 6px 4px; }
+}
+
+/* Chat history and Projects (SPEC-FE-066): the right column's upper part, Pending Approvals folded below. */
+.cc-side { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.cc-side > .cc-approvals { flex: 0 1 auto; max-height: 45%; }
+.cc-history { display: flex; flex-direction: column; gap: 10px; flex: 1 1 auto; min-height: 0; padding: 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow); }
+.cc-history input, .cc-history textarea { border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); padding: 6px 8px; font: inherit; font-size: 12.5px; min-width: 0; }
+.cc-history textarea { resize: vertical; }
+.cc-hist-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 10px; margin: 0 -4px; padding: 0 4px; }
+.cc-hist-group { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 2px 6px; }
+.cc-hist-row { position: relative; display: flex; align-items: center; gap: 4px; padding: 2px 4px 2px 0; border-radius: 10px; }
+.cc-hist-row:hover { background: var(--bg); }
+.cc-hist-row.is-active { background: var(--accent-soft); }
+.cc-hist-row.is-editing { padding: 4px; gap: 6px; }
+.cc-hist-row.is-editing input { flex: 1; }
+.cc-hist-main { flex: 1; min-width: 0; text-align: left; border: none; background: none; color: var(--text); padding: 6px 8px; cursor: pointer; font-size: 12.5px; line-height: 1.35; }
+.cc-hist-main > span:first-child { min-width: 0; }
+.cc-menu { position: absolute; right: 4px; top: 100%; z-index: 30; display: grid; min-width: 180px; padding: 4px; border-radius: 10px; background: var(--panel); border: 1px solid var(--border); box-shadow: 0 10px 30px color-mix(in srgb, var(--text) 15%, transparent); }
+.cc-menu button { text-align: left; border: none; background: none; color: var(--text); padding: 6px 10px; border-radius: 6px; font-size: 12.5px; cursor: pointer; }
+.cc-menu button:hover { background: var(--bg); }
+.cc-menu button.text-danger { color: var(--danger); }
+.cc-proj-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--text); cursor: pointer; transition: border-color .15s, background .15s; }
+.cc-proj-row:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: var(--bg); }
+.cc-proj-emoji { display: grid; place-items: center; width: 32px; height: 32px; flex-shrink: 0; border-radius: 9px; background: var(--accent-soft); font-size: 16px; }
+.cc-proj-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 180px; padding: 1px 8px; border-radius: 999px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: var(--accent-soft); color: var(--text); }
+.cc-hist-file { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); }
+.cc-fold { border: none; background: none; padding: 0; color: var(--text); font-size: 14px; font-weight: 600; cursor: pointer; }
+.cc-hist-open, .cc-hist-close, .cc-hist-backdrop { display: none; }
+@media (max-width: 900px) {
+  .cc-side { display: contents; }
+  .cc-side > .cc-approvals { max-height: none; }
+  /* Below 900 px the history is a drawer, opened by "🕘 Chats" in the chat header. */
+  .cc-history { position: fixed; inset: 0 0 0 auto; z-index: 60; width: min(340px, 92vw); border-radius: 0; transform: translateX(105%); visibility: hidden; transition: transform .2s ease, visibility .2s; }
+  .cc-history.is-open { transform: none; visibility: visible; }
+  .cc-hist-open, .cc-hist-close { display: inline-flex; }
+  .cc-hist-backdrop { display: block; position: fixed; inset: 0; z-index: 55; background: color-mix(in srgb, var(--sidebar-bg) 55%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) { .cc-history { transition: none; } }
+
 @tailwind components;
 @tailwind utilities;

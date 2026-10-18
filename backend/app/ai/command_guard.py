@@ -371,6 +371,16 @@ _SCOPE: dict[str, str] = {
     "notify_owner": r"notify|tell|alert|inform|message|let (?:me|the owner|owner)|ping|email me|জানা",
     "create_task": r"task|todo|to-do|to do|remind|assign|purchase order|po\b|follow up|follow-up",
     "call_webhook": r"webhook|call|post to|send to|hit|ping",
+    # SPEC-BE-098 product listings
+    "create_product_listing": r"listing|list (it|them|the|this|these|each|every|my|our)|product page|descri|title|add (it|them|the|this|these|each|every|new)?\s*products?|create (a |the |new )?products?|catalog|upload",
+    "publish_product": r"publish|go live|live on|put (it|them) on|website|web ?site|online store|shop|store",
+    "analyze_product": r"analy[sz]|look at|identify|what('?s| is) (this|in)|describe|recogni",
+    # Job lists (SPEC-BE-097)
+    "retry_failed_jobs": r"retry|try again|re-?run|redo",
+    "pause_job_list": r"pause|hold|stop for now|wait",
+    "resume_job_list": r"resume|continue|unpause|start again|start from|carry on|চালু",
+    # "Delete/remove the jobs" means cancel: a job list is never erased, its waiting jobs are skipped.
+    "cancel_job_list": r"cancel|abort|stop|don'?t run|drop|delete|remove|clear|get rid of|বাতিল|মুছ|বন্ধ",
 }
 _SCOPE_RE = {k: re.compile(rf"(?<!\w)(?:{v})", re.IGNORECASE) for k, v in _SCOPE.items()}
 
@@ -386,6 +396,8 @@ def requested(action_type: str, evidence: Evidence) -> bool:
 _NUMBER_PARAMS = {
     "budget", "value", "threshold", "rate", "free_over", "new_on_hand", "count", "duration_days", "duration_s",
     "age_min", "age_max", "sla_days_min", "sla_days_max",
+    # SPEC-BE-098: a listing's price and weight are the user's, never the AI's.
+    "price", "compare_at_price", "weight_grams",
 }
 _COUNTRY_PARAMS = {"countries", "country_codes"}
 _URL_PARAMS = {"destination_url", "landing_url", "url", "link_url"}
@@ -393,6 +405,14 @@ _DATE_PARAMS = {"start_date", "end_date", "date"}
 _SKU_PARAMS = {"sku", "skus", "product_skus"}
 
 _KEEP = object()  # "the value is supported, keep it as it is"
+
+# Organic platforms as users write them (English and Bengali).
+_ORGANIC_NAMES = {
+    "facebook": re.compile(r"\b(facebook|fb)\b|ফেসবুক", re.IGNORECASE),
+    "instagram": re.compile(r"\b(instagram|insta|ig)\b|ইনস্টাগ্রাম", re.IGNORECASE),
+    "tiktok": re.compile(r"\btik\s?tok\b|টিকটক", re.IGNORECASE),
+    "linkedin": re.compile(r"\blinked\s?in\b|লিংকডইন", re.IGNORECASE),
+}
 
 
 @dataclass
@@ -430,6 +450,7 @@ class _Checker:
         self.context_text = context_text.lower()
         self.stock = {str(p.get("sku", "")).lower(): p.get("stock") for p in context.get("products") or []}
         self.zernio_accounts = list(((context.get("zernio_ads") or {}).get("ad_accounts")) or [])
+        self.social_accounts = [a for a in context.get("social_accounts") or [] if isinstance(a, dict)]
         self._skus: dict[str, str] | None = None
 
     def tenant_skus(self) -> dict[str, str]:
@@ -546,6 +567,24 @@ class _Checker:
             return _KEEP
         return fixed[0] if isinstance(value, str) else fixed
 
+    def organic_platforms(self, value: Any) -> Any:
+        """An organic post goes only where the user asked: the platforms (or their
+        account names, e.g. a Page name) named in the evidence. Naming none means
+        "my accounts": only the connected ones, so a post never targets a
+        platform that isn't set up. Nothing left = removed = the platforms question."""
+        if not isinstance(value, list):
+            return _KEEP
+        named = {p for p, pattern in _ORGANIC_NAMES.items() if pattern.search(self.ev.text)}
+        for a in self.social_accounts:
+            account = str(a.get("name") or "").strip().lower()
+            if len(account) >= 3 and account in self.ev.lower:
+                named.add(str(a.get("platform")))
+        allowed = named or {str(a.get("platform")) for a in self.social_accounts if a.get("status") == "connected"}
+        kept = [p for p in value if p in allowed]
+        if kept == value:
+            return _KEEP
+        return kept or False
+
     def check(self, name: str, value: Any, params: dict[str, Any]) -> Any:
         """_KEEP, False (unsupported: remove it) or a replacement value."""
         if _is_ref(value):
@@ -570,6 +609,8 @@ class _Checker:
             return _KEEP if self.timezone(value) else False
         if name in _SKU_PARAMS:
             return self.skus(value)
+        if name == "new_sku":  # a listing's new SKU (SPEC-BE-098): from the user's words or files
+            return _KEEP if str(value).strip().lower() in self.ev.lower else False
         if name == "trigger_config" and isinstance(value, dict) and "threshold" in value:
             # "Below 10" is threshold 9: the trigger fires at or below it.
             num = _as_decimal(value["threshold"])
@@ -604,7 +645,10 @@ def guard_actions(
             continue
         kept: dict[str, Any] = {}
         for name, value in params.items():
-            verdict = checker.check(name, value, params)
+            if action.module == "organic" and name == "platforms":
+                verdict = checker.organic_platforms(value)
+            else:
+                verdict = checker.check(name, value, params)
             if verdict is _KEEP:
                 kept[name] = value
                 continue

@@ -10,20 +10,24 @@ the live `orchestrator_plans` table.
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, Enum, Integer, String, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 from app.models.base import TenantScopedMixin, TenantScopedModel, UUIDPrimaryKeyMixin
 
-PLAN_STATUSES = ("proposed", "partially_approved", "approved", "rejected", "executed", "failed")
+PLAN_STATUSES = ("proposed", "partially_approved", "approved", "rejected", "executed", "failed",
+                 # SPEC-BE-097 job lists: a draft runs nothing until submitted; paused/cancelled by the user.
+                 "draft", "submitted", "paused", "cancelled")
 
 
 class OrchestratorMessage(Base, UUIDPrimaryKeyMixin, TenantScopedMixin):
     __tablename__ = "orchestrator_messages"
 
     user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # The chat this message belongs to (SPEC-BE-099; the live column was unused before).
+    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     correlation_id: Mapped[str] = mapped_column(String(36), nullable=False)
@@ -54,3 +58,69 @@ class OrchestratorPlan(Base, TenantScopedModel):
     )
     estimated_cost_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Job lists (SPEC-BE-097): run settings, the items and the job template.
+    mode: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    concurrency: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    progress_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    items: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
+    template: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
+
+class OrchestratorFile(Base, UUIDPrimaryKeyMixin, TenantScopedMixin):
+    """A file attached in Command Chat (SPEC-BE-096): the original in storage,
+    what was extracted from it in `extracted` (text chunks, records, the media
+    ids of its images, warnings)."""
+
+    __tablename__ = "orchestrator_files"
+
+    user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    message_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    mime: Mapped[str] = mapped_column(Text, nullable=False)
+    bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    storage_key: Mapped[str] = mapped_column(Text, nullable=False)
+    # A project's knowledge file (SPEC-BE-099).
+    project_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="extracted")
+    extracted: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class OrchestratorProject(Base, UUIDPrimaryKeyMixin, TenantScopedMixin):
+    """A Command Chat project (SPEC-BE-099): instructions and knowledge files
+    for its chats. Private to its creator (the user's choice)."""
+
+    __tablename__ = "orchestrator_projects"
+
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    emoji: Mapped[str | None] = mapped_column(Text, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class OrchestratorChat(Base, UUIDPrimaryKeyMixin, TenantScopedMixin):
+    """One Command Chat conversation (SPEC-BE-099); its messages carry
+    session_id = this id. Private to its creator."""
+
+    __tablename__ = "orchestrator_chats"
+
+    user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    project_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False, default="New chat")
+    # auto = may still be replaced by the AI title; manual = renamed by the user (or backfilled).
+    title_source: Mapped[str] = mapped_column(Text, nullable=False, default="auto")
+    pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

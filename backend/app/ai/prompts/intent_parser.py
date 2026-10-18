@@ -237,7 +237,7 @@ def parse_intent(
         tenant_id=tenant_id,
     )
     if completion.is_mock:
-        raise LLMProviderError("No AI model is configured; cannot parse the directive. Add one in Integrations › AI Models.")
+        raise LLMProviderError("PilotSonic's AI isn't set up yet; cannot parse the directive. The Super admin adds the AI keys.")
 
     result: ParsedIntent | ClarificationRequest
     raw_json = _extract_json_object(completion.text)

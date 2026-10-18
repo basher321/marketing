@@ -1,7 +1,7 @@
 """Zernio client (SPEC-BE-084): one paid-ads API for Meta (Facebook/Instagram),
 Google Ads, TikTok, LinkedIn, Pinterest and X.
 
-One server-wide key (settings.ZERNIO_API_KEY, `Authorization: Bearer <key>`)
+One software-wide key (the Super admin's, else settings.ZERNIO_API_KEY; SPEC-BE-101; `Authorization: Bearer <key>`)
 serves every company; each company works inside its own Zernio profile (see
 services/zernio_service.py, which also enforces that every id belongs to it).
 Zernio holds the platform tokens (managed OAuth); we never see them.
@@ -23,6 +23,13 @@ import httpx
 from app.config import get_settings
 from app.integrations.base_adapter import PlatformError, short
 
+
+def _app(group: str, field: str) -> str:
+    """A software credential (SPEC-BE-101): the Super admin's screen first, then backend/.env."""
+    from app.services import platform_service
+
+    return platform_service.value(group, field)
+
 TIMEOUT = 30.0
 LONG_TIMEOUT = 120.0  # create / boost / video upload block on the platform
 
@@ -36,7 +43,7 @@ class ZernioError(PlatformError):
 
 
 def configured() -> bool:
-    return bool(get_settings().ZERNIO_API_KEY.get_secret_value().strip())
+    return bool(_app("zernio", "api_key"))
 
 
 def _message(body: Any, fallback: str) -> tuple[str, str | None]:
@@ -62,7 +69,7 @@ def _error(resp: httpx.Response) -> ZernioError:
     # Our status (SPEC-BE-084 FR13): Zernio's message is shown as is.
     if s == 401:
         # The server-wide key is the operator's to fix, not the user's.
-        return ZernioError("Zernio rejected this server's API key; ask the administrator to check ZERNIO_API_KEY.",
+        return ZernioError("Zernio rejected PilotSonic's API key; the Super admin needs to check it.",
                            status_code=503, code=code)
     if s == 501:
         return ZernioError(f"Not available on this platform: {short(message, 300)}", status_code=422, code=code)
@@ -82,9 +89,9 @@ def call(method: str, path: str, *, timeout: float = TIMEOUT, idempotency_key: s
     from app.integrations.base_adapter import http
 
     st = get_settings()
-    key = st.ZERNIO_API_KEY.get_secret_value().strip()
+    key = _app("zernio", "api_key")
     if not key:
-        raise ZernioError("Zernio isn't set up on this server (ZERNIO_API_KEY is empty).", status_code=503)
+        raise ZernioError("Zernio isn't set up in PilotSonic yet (the Super admin adds the key).", status_code=503)
     headers = {"Authorization": f"Bearer {key}", "Accept": "application/json"}
     if idempotency_key:
         headers["Idempotency-Key"] = idempotency_key[:255]
@@ -376,9 +383,9 @@ def campaign_analytics(campaign_id: str, platform: str, start: str, end: str, br
     from app.integrations.base_adapter import http
 
     st = get_settings()
-    key = st.ZERNIO_API_KEY.get_secret_value().strip()
+    key = _app("zernio", "api_key")
     if not key:
-        raise ZernioError("Zernio isn't set up on this server (ZERNIO_API_KEY is empty).", status_code=503)
+        raise ZernioError("Zernio isn't set up in PilotSonic yet (the Super admin adds the key).", status_code=503)
     try:
         resp = http("GET", f"{st.ZERNIO_BASE_URL.rstrip('/')}/ads/campaigns/{quote(campaign_id, safe='')}/analytics",
                     headers={"Authorization": f"Bearer {key}", "Accept": "application/json"}, timeout=TIMEOUT,

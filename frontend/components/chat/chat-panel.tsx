@@ -6,12 +6,14 @@ import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type Keyb
 
 import { formatMoney } from "@/lib/format/money";
 import { fetchMedia, fetchMediaItem, mediaKeys } from "@/lib/api/media";
-import { discardDraft, fetchMessages, orchestratorKeys, sendMessage } from "@/lib/api/orchestrator";
+import { discardDraft, fetchChat, fetchChatMessages, fetchProject, orchestratorKeys, sendMessage } from "@/lib/api/orchestrator";
 import { ApiError } from "@/lib/types/common";
 import type { MediaItem, MediaKind } from "@/lib/types/media";
 import type { ChatMessage, PlanRead, ResultItem } from "@/lib/types/orchestrator";
 
 import { MediaThumb } from "../organic/media-picker";
+import { AttachButton, AttachmentChips, DropOverlay, MessageFiles, useAttachments, useDropZone } from "./attachments";
+import { FixLine } from "./job-board";
 import PlanCard from "./plan-card";
 import {
   MicIcon,
@@ -237,6 +239,7 @@ function ResultsCard({ items }: { items: ResultItem[] }) {
                 ))}
             </div>
             {r.summary && <div className={`ml-[26px] mt-0.5 ${r.status === "failed" ? "text-danger" : "text-muted"}`}>{r.summary}</div>}
+            {r.status === "failed" && r.fix && <div className="ml-[26px] mt-0.5"><FixLine fix={r.fix} /></div>}
             {r.data && r.data.length > 0 && (
               <div className="ml-[26px]">
                 <ResultData rows={r.data} />
@@ -432,9 +435,22 @@ function bubbleText(m: ChatMessage): string {
 // voice): plan cards render for every plan reply (also after a reload, via
 // plan_id), clarifying questions show what they're waiting for, and "Start
 // over" drops the pending draft.
-export default function ChatPanel() {
+export default function ChatPanel({ chatId = null, newChatProjectId = null, onChatCreated, onOpenHistory }: {
+  /** The open chat (SPEC-FE-066); null = a new, empty chat. */
+  chatId?: string | null;
+  /** The project a new chat starts in. */
+  newChatProjectId?: string | null;
+  onChatCreated?: (id: string) => void;
+  onOpenHistory?: () => void;
+} = {}) {
   const queryClient = useQueryClient();
-  const query = useQuery({ queryKey: orchestratorKeys.messages, queryFn: fetchMessages });
+  const query = useQuery({
+    queryKey: orchestratorKeys.chatMessages(chatId),
+    queryFn: () => fetchChatMessages(chatId as string),
+    enabled: !!chatId,
+  });
+  const chatInfo = useQuery({ queryKey: orchestratorKeys.chat(chatId ?? "none"), queryFn: () => fetchChat(chatId as string), enabled: !!chatId });
+  const newProject = useQuery({ queryKey: orchestratorKeys.project(newChatProjectId ?? "none"), queryFn: () => fetchProject(newChatProjectId as string), enabled: !chatId && !!newChatProjectId });
   const [text, setText] = useState("");
   const [voiceMark, setVoiceMark] = useState<{ language: string | null } | null>(null);
   const [sentPlans, setSentPlans] = useState<Record<string, PlanRead>>({});
@@ -442,23 +458,34 @@ export default function ChatPanel() {
   const input = useRef<HTMLTextAreaElement>(null);
   const [voiceReplies, setVoiceReplies] = useVoiceRepliesSetting();
   const player = useReplyPlayer();
+  // Attachments (SPEC-FE-064): 📎, drag-and-drop over the chat, or paste.
+  const attach = useAttachments();
+  const drop = useDropZone(attach.add);
   const [micOk, setMicOk] = useState(true);
   useEffect(() => setMicOk(canRecord()), []);
 
   const send = useMutation({
-    mutationFn: (v: { body: string; voice?: { language: string | null } }) => sendMessage(v.body, v.voice),
+    mutationFn: (v: { body: string; voice?: { language: string | null }; fileIds?: string[] }) =>
+      sendMessage(v.body, v.voice, v.fileIds ?? [], { chatId, projectId: newChatProjectId }),
     onSuccess: (res) => {
       const { reply, plan, ...userMessage } = res;
-      queryClient.setQueryData<ChatMessage[]>(orchestratorKeys.messages, (old) => [...(old ?? []), userMessage, reply]);
+      const target = res.chat_id ?? chatId;
+      queryClient.setQueryData<ChatMessage[]>(orchestratorKeys.chatMessages(target ?? null), (old) => [...(old ?? []), userMessage, reply]);
+      void queryClient.invalidateQueries({ queryKey: orchestratorKeys.chats });
+      if (target && target !== chatId) {
+        void queryClient.invalidateQueries({ queryKey: orchestratorKeys.projects });
+        onChatCreated?.(target); // a new chat: the page opens it (?c=)
+      }
       if (plan) setSentPlans((p) => ({ ...p, [plan.id]: plan }));
       setText("");
       setVoiceMark(null);
+      attach.clear();
       input.current?.focus();
     },
     // On failure the typed text stays so the user can retry.
   });
   const startOver = useMutation({
-    mutationFn: discardDraft,
+    mutationFn: () => discardDraft(chatId),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: orchestratorKeys.messages }),
   });
 
@@ -470,8 +497,8 @@ export default function ChatPanel() {
   });
   const recording = recorder.state !== "idle";
 
-  const messages = query.data ?? [];
-  const idle = query.isSuccess && messages.length === 0 && !send.isPending;
+  const messages = (chatId ? query.data : undefined) ?? [];
+  const idle = (chatId ? query.isSuccess : true) && messages.length === 0 && !send.isPending;
   const wasIdle = useRef(false);
   const [dropIn, setDropIn] = useState(false);
   useEffect(() => {
@@ -480,13 +507,18 @@ export default function ChatPanel() {
   }, [idle]);
   const lastAi = [...messages].reverse().find((m) => m.sender === "ai");
   const lastUser = [...messages].reverse().find((m) => m.sender === "user");
-  const lastVoiceLanguage = [...messages].reverse().find((m) => m.sender === "user" && m.voice)?.voice_language ?? null;
+  // Replies are spoken in the language asked for ("reply in English"), else the one spoken (SPEC-FE-062 Amendment C).
+  const replyLanguage = (m: ChatMessage | undefined) => m?.reply_language ?? m?.voice_language ?? null;
+  const lastVoiceLanguage = replyLanguage([...messages].reverse().find((m) => m.sender === "user" && m.voice));
   const waiting = lastAi?.kind === "clarification" && !startOver.isSuccess ? lastAi : null;
   // SPEC-FE-056: "media id" is the label of the ad's image/video question (SPEC-BE-090).
   const wantsMedia = !!waiting?.waiting_for.includes("media id");
   const [picking, setPicking] = useState(false);
   const submit = (body: string, voice?: { language: string | null }) => {
-    if (body.trim() && !send.isPending) send.mutate({ body: body.trim(), voice });
+    if (send.isPending || attach.busy) return; // Send waits for uploads to finish
+    const fileIds = attach.ready.map((f) => f.id);
+    const message = body.trim() || (fileIds.length ? "Read these files and suggest jobs" : "");
+    if (message) send.mutate({ body: message, voice, fileIds });
   };
   const pickMedia = (item: MediaItem) => {
     setPicking(false);
@@ -495,7 +527,8 @@ export default function ChatPanel() {
 
   // Spoken replies (SPEC-FE-062): after a voice command, each new AI message
   // (the reply now, the summary later) is read in the command's language.
-  const seen = useRef<Set<string> | null>(null);
+  // A new chat starts with nothing seen, so its first reply can be spoken too.
+  const seen = useRef<Set<string> | null>(chatId ? null : new Set());
   useEffect(() => {
     if (!query.data) return;
     if (seen.current === null) {
@@ -509,8 +542,8 @@ export default function ChatPanel() {
     const after = query.data.slice(query.data.findIndex((m) => m.id === lastUser.id) + 1);
     // In order: the reply now, the summary when its steps finish (queued, never cut off).
     fresh
-      .filter((m) => m.sender === "ai" && after.some((a) => a.id === m.id))
-      .forEach((m) => player.enqueue(m.id, lastUser.voice_language));
+      .filter((m) => m.sender === "ai" && m.kind !== "progress" && after.some((a) => a.id === m.id))
+      .forEach((m) => player.enqueue(m.id, replyLanguage(lastUser)));
   }, [query.data]);
 
   // The first view jumps to the latest message (again once cards have laid
@@ -569,6 +602,8 @@ export default function ChatPanel() {
         {recording ? (
           <VoiceBar rec={recorder} />
         ) : (
+          <>
+          <AttachmentChips items={attach.items} onRemove={attach.remove} />
           <form className="cc-composer" onSubmit={onSubmit}>
             <div className="flex min-w-0 flex-1 flex-col">
               {voiceMark && (
@@ -594,10 +629,18 @@ export default function ChatPanel() {
                   if (!e.target.value.trim()) setVoiceMark(null);
                 }}
                 onKeyDown={onKeyDown}
+                onPaste={(e) => {
+                  const files = Array.from(e.clipboardData.files);
+                  if (files.length) {
+                    e.preventDefault();
+                    attach.add(files);
+                  }
+                }}
                 disabled={send.isPending}
                 aria-label="Message the orchestrator"
               />
             </div>
+            <AttachButton onFiles={attach.add} disabled={send.isPending} />
             <button
               type="button"
               className="cc-icon-btn"
@@ -608,12 +651,19 @@ export default function ChatPanel() {
             >
               <MicIcon />
             </button>
-            <button type="submit" className="cc-icon-btn primary" disabled={send.isPending || !text.trim()} aria-label="Send" title="Send (Enter)">
+            <button
+              type="submit"
+              className="cc-icon-btn primary"
+              disabled={send.isPending || attach.busy || (!text.trim() && attach.ready.length === 0)}
+              aria-label="Send"
+              title={attach.busy ? "Waiting for the files to finish uploading" : "Send (Enter)"}
+            >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M5 12h14M13 6l6 6-6 6" />
               </svg>
             </button>
           </form>
+          </>
         )}
         {send.isError && (
           <p className="m-0 mt-1.5 px-1 text-xs text-danger" role="alert">
@@ -624,16 +674,30 @@ export default function ChatPanel() {
   );
 
   return (
-    <section className={`cc-panel ${idle ? "idle" : ""}`} aria-label="Command Chat">
+    <section className={`cc-panel ${idle ? "idle" : ""}`} aria-label="Command Chat" {...drop.props}>
+      {drop.over && <DropOverlay />}
       <header className="cc-header">
         <span className="cc-orb" data-busy={send.isPending || player.current !== null} aria-hidden="true" />
         <div className="min-w-0 flex-1">
-          <div className="cc-title">AI Orchestrator</div>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="cc-title">PilotSonic</span>
+            {(chatInfo.data?.project ?? (newProject.data ? { emoji: newProject.data.emoji, name: newProject.data.name } : null)) && (
+              <span className="cc-proj-chip" data-testid="project-chip">
+                {(chatInfo.data?.project ?? newProject.data)?.emoji} {(chatInfo.data?.project ?? newProject.data)?.name}
+              </span>
+            )}
+            {chatInfo.data && <span className="hidden truncate text-[12px] text-muted sm:inline" title={chatInfo.data.title}>· {chatInfo.data.title}</span>}
+          </div>
           <div className="cc-status">
             <span className="cc-status-dot" aria-hidden="true" />
             {send.isPending ? "Planning…" : player.current ? "Speaking…" : "Online · changes wait for your approval"}
           </div>
         </div>
+        {onOpenHistory && (
+          <button type="button" className="btn btn-secondary btn-sm cc-hist-open" onClick={onOpenHistory} aria-label="Chats and projects">
+            🕘 Chats
+          </button>
+        )}
         <label className="flex cursor-pointer items-center gap-2 text-xs text-muted" title="Read replies aloud after a voice command">
           <span className="hidden sm:inline">Voice replies</span>
           <button
@@ -656,13 +720,13 @@ export default function ChatPanel() {
         </div>
       ) : (
       <div className="cc-scroll" role="log" aria-live="polite" aria-label="Conversation">
-        {query.isPending ? (
+        {chatId && query.isPending ? (
           <div className="grid gap-3">
             <div className="cc-shimmer h-10 w-2/3" />
             <div className="cc-shimmer ml-auto h-10 w-1/2" />
             <div className="cc-shimmer h-24 w-3/4" />
           </div>
-        ) : query.isError ? (
+        ) : chatId && query.isError ? (
           <p className="text-[13px] text-danger" role="alert">
             Failed to load messages: {query.error.message}
           </p>
@@ -671,6 +735,7 @@ export default function ChatPanel() {
             m.sender === "user" ? (
               <div key={m.id} className="cc-row user">
                 <div className="cc-stack">
+                  {m.files?.length > 0 && <MessageFiles files={m.files} />}
                   <div className="cc-bubble user whitespace-pre-line">{m.body}</div>
                   <div className="cc-meta">
                     {m.voice && <span className="cc-voice-badge">🎙 Voice · {languageLabel(m.voice_language)}</span>}
@@ -715,7 +780,11 @@ export default function ChatPanel() {
                       )}
                     </div>
                   ) : (
-                    <div className="cc-bubble ai whitespace-pre-line">{bubbleText(m)}</div>
+                    m.kind === "progress" ? (
+                      <div className={`cc-progress-line ${m.body.startsWith("✗") ? "is-fail" : ""}`}>{m.body}</div>
+                    ) : (
+                      <div className="cc-bubble ai whitespace-pre-line">{bubbleText(m)}</div>
+                    )
                   )}
                   {waiting?.id === m.id && wantsMedia && picking && (
                     <ChatMediaPicker onPick={pickMedia} onClose={() => setPicking(false)} disabled={send.isPending} />
@@ -737,7 +806,7 @@ export default function ChatPanel() {
       </div>
       )}
 
-      {!idle && !query.isPending && composer}
+      {!idle && !(chatId && query.isPending) && composer}
     </section>
   );
 }

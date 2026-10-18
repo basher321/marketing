@@ -5,6 +5,12 @@ integrations (pasted tokens, SPEC-BE-052, or a sign-in, SPEC-BE-080). Profile, p
 come from the last connection test (integrations.metadata.profile), not from
 a platform call per list. `connection()` hands an adapter its decrypted
 credentials; they are never returned to a client.
+
+SPEC-BE-104: when a platform has no usable direct connection (not connected,
+expired or error) but the company has a SocialAPI account for it, that account
+is the platform's account (`connected_via: "socialapi"`) and `connection()`
+returns `via: "socialapi"`, which social_base.adapter() turns into the SocialAPI
+publisher. A direct connection always comes first.
 """
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -85,6 +91,38 @@ def _token_info(record: Integration, platform: str, state: str, now: datetime) -
     }
 
 
+SOCIALAPI_NOTE = "Posts through SocialAPI (connected in Organic › SocialAPI)."
+
+
+def _socialapi_account(platform: str, a: dict[str, Any], last: datetime | None) -> dict[str, Any]:
+    from app.services import socialapi_service
+
+    problem = socialapi_service.organic_problem(a)
+    capabilities = dict(DEFAULT_CAPABILITIES[platform])
+    if platform == "instagram":
+        capabilities["story"] = False  # no documented story option in SocialAPI's post API
+    return {
+        **_NO_TOKEN_INFO,
+        "connected_via": "socialapi",
+        "account_id": a.get("id"),
+        "oauth_available": social_oauth_service.oauth_available(platform),
+        "integration_id": None,
+        "platform": platform,
+        "label": LABEL[platform],
+        "account_name": a.get("page_name") or a.get("name"),
+        "handle": a.get("username"),
+        "avatar_url": a.get("avatar_url"),
+        "status": "error" if problem else "connected",
+        "missing_permissions": [],
+        "capabilities": capabilities,
+        "limits": {},
+        "extra": {},
+        "last_error": problem,
+        "last_published_at": last,
+        "notes": [SOCIALAPI_NOTE],
+    }
+
+
 def _account(db: Session, tenant_id: str, platform: str, now: datetime) -> dict[str, Any]:
     records = integrations._records(db, tenant_id, platform)
     status, _ = integrations._provider_status(records, now)
@@ -100,6 +138,12 @@ def _account(db: Session, tenant_id: str, platform: str, now: datetime) -> dict[
     last = db.query(func.max(ScheduledPost.published_at)).filter(
         ScheduledPost.tenant_id == tenant_id, ScheduledPost.channel == platform, ScheduledPost.status == "published"
     ).scalar()
+    if state in ("not_connected", "expired", "error"):
+        from app.services import socialapi_service
+
+        via_sapi = socialapi_service.organic_accounts(db, tenant_id).get(platform)
+        if via_sapi is not None:
+            return _socialapi_account(platform, via_sapi, last.astimezone(timezone.utc) if last else None)
     connected = state != "not_connected" and record is not None
     return {
         **(_token_info(record, platform, state, now) if connected and record is not None else _NO_TOKEN_INFO),
@@ -136,9 +180,18 @@ def connection(db: Session, tenant_id: str, platform: str) -> dict[str, Any]:
     token about to expire is refreshed first (SPEC-BE-080)."""
     social_oauth_service.ensure_fresh(db, tenant_id, platform)
     conn = integrations.ad_platform_connection(db, tenant_id, platform)
-    if conn is None or conn["status"] != "connected":
-        raise ConflictError(f"{LABEL[platform]} isn't connected: connect it in Integrations.")
-    return {"integration_id": conn["integration_id"], "fields": conn["fields"]}
+    if conn is not None and conn["status"] == "connected":
+        return {"integration_id": conn["integration_id"], "fields": conn["fields"], "via": "direct"}
+    from app.services import socialapi_service
+
+    account = socialapi_service.organic_accounts(db, tenant_id).get(platform)
+    if account is None:
+        raise ConflictError(f"{LABEL[platform]} isn't connected: connect it in Organic › SocialAPI.")
+    problem = socialapi_service.organic_problem(account)
+    if problem:
+        raise ConflictError(f"{LABEL[platform]} (SocialAPI) can't post yet: {problem}")
+    return {"integration_id": None, "via": "socialapi",
+            "fields": {"key": socialapi_service.organic_key(db, tenant_id), "account_id": str(account["id"]), "platform": platform}}
 
 
 def mark_expired(db: Session, tenant_id: str, platform: str, message: str) -> None:

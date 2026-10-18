@@ -208,7 +208,10 @@ RESET_TABLES = (
     "approval_queue",
     "notifications",
     "orchestrator_plans",
+    "orchestrator_files",  # SPEC-BE-096 chat attachments (before the messages they point to)
     "orchestrator_messages",
+    "orchestrator_chats",  # SPEC-BE-099 chat history
+    "orchestrator_projects",
     "messages",
     "conversations",
     "abandoned_carts",

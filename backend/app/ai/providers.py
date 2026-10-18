@@ -7,6 +7,7 @@ raises ProviderCallError with a short, secret-free message on any failure.
 Gemini, Groq, OpenRouter and Ollama expose OpenAI-compatible chat-completions
 endpoints, so they share the OpenAI adapter with a different base URL.
 """
+import base64
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -89,14 +90,32 @@ def call(
     max_tokens: int,
     timeout_s: float,
     temperature: float | None = None,
+    images: list[tuple[str, bytes]] | None = None,
+    require_complete: bool = True,
 ) -> tuple[str, int, int]:
+    """One chat call. `images` [(mime, bytes)] (SPEC-BE-096 FR4) are sent with
+    the user text as base64 image blocks; without them the request is
+    exactly the text-only one."""
     spec = BY_PROVIDER.get(provider)
     if spec is None:
         raise ProviderCallError(f"Unknown provider {provider}.")
     body: dict[str, Any]
+    user_content: Any = user_prompt
+    if images and spec.style == "anthropic":
+        user_content = [
+            *({"type": "image", "source": {"type": "base64", "media_type": mime, "data": base64.b64encode(data).decode()}}
+              for mime, data in images),
+            {"type": "text", "text": user_prompt},
+        ]
+    elif images:
+        user_content = [
+            {"type": "text", "text": user_prompt},
+            *({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{base64.b64encode(data).decode()}"}}
+              for mime, data in images),
+        ]
     if spec.style == "anthropic":
         headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
-        body = {"model": model, "max_tokens": max_tokens, "system": system_prompt, "messages": [{"role": "user", "content": user_prompt}]}
+        body = {"model": model, "max_tokens": max_tokens, "system": system_prompt, "messages": [{"role": "user", "content": user_content}]}
     else:
         headers = {"Authorization": f"Bearer {api_key or 'none'}", "content-type": "application/json"}
         # OpenAI's newer models (GPT-5, o-series) reject max_tokens and every
@@ -106,10 +125,14 @@ def call(
         body = {
             "model": model,
             limit_name: max_tokens,
-            "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+            "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_content}],
         }
     if temperature is not None:
         body["temperature"] = temperature
+    if provider == "gemini":
+        # Gemini's thinking counts against max_tokens: by default it can spend
+        # nearly all of it (2026-10-11: ~2,400 of 2,500), cutting the answer off.
+        body["reasoning_effort"] = "low"
     try:
         with client_factory(timeout_s) as client:
             resp = client.post(spec.url, headers=headers, json=body)
@@ -123,6 +146,10 @@ def call(
             if temperature is not None and resp.status_code == 400 and "temperature" in _error_text(resp).lower():
                 body.pop("temperature")
                 resp = client.post(spec.url, headers=headers, json=body)
+            # A Gemini model without that thinking setting: ask once more without it.
+            if "reasoning_effort" in body and resp.status_code == 400 and "reasoning" in _error_text(resp).lower():
+                body.pop("reasoning_effort")
+                resp = client.post(spec.url, headers=headers, json=body)
     except httpx.TimeoutException:
         raise ProviderCallError(f"Timed out after {timeout_s:.0f}s.") from None
     except httpx.HTTPError as exc:
@@ -134,12 +161,23 @@ def call(
         if spec.style == "anthropic":
             text = "".join(b.get("text", "") for b in body.get("content", []) if b.get("type") == "text")
             usage = body.get("usage") or {}
-            return text, int(usage.get("input_tokens", 0)), int(usage.get("output_tokens", 0))
-        text = body["choices"][0]["message"].get("content") or ""
-        usage = body.get("usage") or {}
-        return text, int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0))
+            cut_off = body.get("stop_reason") == "max_tokens"
+            result = text, int(usage.get("input_tokens", 0)), int(usage.get("output_tokens", 0))
+        else:
+            choice = body["choices"][0]
+            text = choice["message"].get("content") or ""
+            usage = body.get("usage") or {}
+            cut_off = choice.get("finish_reason") == "length"
+            result = text, int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0))
     except (ValueError, KeyError, IndexError, TypeError, AttributeError):
         raise ProviderCallError("Unexpected response format.") from None
+    # A cut-off or empty answer is a failed call, so the chain moves on to the
+    # next model instead of handing back half a JSON plan (2026-10-11).
+    if cut_off and require_complete:
+        raise ProviderCallError(f"The answer was cut off at the {max_tokens}-token limit.")
+    if require_complete and not text.strip():
+        raise ProviderCallError("Empty answer.")
+    return result
 
 
 # ---------------------------------------------------------------------------

@@ -47,6 +47,9 @@ AC-006 Every FR/NFR mapped to a package
 
 ## Amendment (SPEC-BE-074, 2026-10-03)
 - **Added `pillow==12.0.0`:** crops or pads media library images to each platform's ratio (1:1, 4:5, 9:16, 1.91:1), and fits Sora reference images to the video size. Approved by the user (decision D3). Videos are still never transcoded (no ffmpeg).
+- **Added `pypdf==5.4.0`, `python-docx==1.1.2`, `openpyxl==3.1.5` (SPEC-BE-096, approved 2026-10-10):** Command Chat
+  file extraction (PDF text/images, Word paragraphs/tables/images, Excel sheets). All pure Python; ZIP and CSV use the
+  standard library.
 
 ## Amendment (SPEC-BE-093, 2026-10-09)
 

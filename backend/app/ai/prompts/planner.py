@@ -317,7 +317,7 @@ def generate_plan(
         tenant_id=tenant_id,
     )
     if completion.is_mock:
-        raise LLMProviderError("No AI model is configured; cannot generate a plan. Add one in Integrations › AI Models.")
+        raise LLMProviderError("PilotSonic's AI isn't set up yet; cannot generate a plan. The Super admin adds the AI keys.")
 
     # Dropped-action rule (SPEC-BE-032): an action whose action_type is not
     # exactly one of ACTION_TYPES (case-sensitive) is DROPPED - never kept,

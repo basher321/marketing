@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 
@@ -78,6 +79,9 @@ export default function ConnectPanel({
   });
   const [advanced, setAdvanced] = useState(false);
   const isMeta = spec.provider === "meta_ads";
+  // SPEC-FE-068 / SPEC-BE-101: no pasted tokens for social and ad platforms.
+  const connectOnly = Boolean(spec.connect_only);
+  const isSocial = ["facebook", "instagram", "tiktok", "linkedin"].includes(spec.provider);
   const err = save.error ?? test.error ?? disconnect.error ?? connectMeta.error;
   const hasSaved = status.configured_fields.length > 0;
 
@@ -108,12 +112,29 @@ export default function ConnectPanel({
             <button type="button" className="btn w-full" disabled={connectMeta.isPending} onClick={() => connectMeta.mutate()}>
               {connectMeta.isPending ? "Opening Facebook…" : status.status === "not_connected" ? "Connect with Facebook" : "Reconnect with Facebook"}
             </button>
-            <button type="button" className="mt-2 text-xs text-muted underline" onClick={() => setAdvanced((v) => !v)}>
-              {advanced ? "Hide" : "Advanced: paste a system user token instead"}
-            </button>
+            {!connectOnly && (
+              <button type="button" className="mt-2 text-xs text-muted underline" onClick={() => setAdvanced((v) => !v)}>
+                {advanced ? "Hide" : "Advanced: paste a system user token instead"}
+              </button>
+            )}
           </div>
         )}
-        {(!isMeta || advanced) && (
+        {connectOnly && (
+          <div className="mb-4 rounded-md border border-border bg-bg p-3 text-[13px]" data-testid="connect-only">
+            <p className="m-0 mb-2">
+              PilotSonic provides the platform access: you only connect your own {isSocial ? "page or account" : "ad account"}, no token or key needed.
+            </p>
+            {isSocial ? (
+              <div className="flex flex-wrap gap-2">
+                <Link href="/marketing/organic/accounts" className="btn btn-secondary btn-sm">Connect on Organic › Accounts</Link>
+                <Link href="/marketing/organic/socialapi" className="btn btn-secondary btn-sm">Connect through SocialAPI</Link>
+              </div>
+            ) : (
+              <Link href="/marketing/paid/zernio/new" className="btn btn-secondary btn-sm">Connect through Zernio</Link>
+            )}
+          </div>
+        )}
+        {!connectOnly && (!isMeta || advanced) && (
         <>
         <div className="form-row">
           <label htmlFor="ic_account">Account name (optional)</label>
@@ -152,7 +173,7 @@ export default function ConnectPanel({
           </p>
         )}
         <div className="flex flex-wrap gap-2">
-          {(!isMeta || advanced) && (
+          {!connectOnly && (!isMeta || advanced) && (
             <button type="submit" className="btn btn-sm" disabled={save.isPending}>
               {save.isPending ? "Saving & testing…" : "Save & test"}
             </button>

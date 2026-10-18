@@ -131,6 +131,13 @@ def list_integration_statuses(db: Session, tenant_id: str) -> list[dict[str, Any
     return result
 
 
+# SPEC-BE-101 FR5: companies connect these (sign-in button, Zernio or SocialAPI);
+# they never paste a token. An existing pasted connection keeps working.
+CONNECT_ONLY = ("facebook", "instagram", "tiktok", "linkedin", "meta_ads", "tiktok_ads", "google_ads", "linkedin_ads",
+                "x_ads", "snapchat_ads", "pinterest_ads")
+CONNECT_ONLY_MESSAGE = "Connect your page with the Connect button, or through Zernio / SocialAPI; PilotSonic doesn't take pasted tokens."
+
+
 def catalog() -> list[dict[str, Any]]:
     return [
         {
@@ -143,6 +150,7 @@ def catalog() -> list[dict[str, Any]]:
             ],
             "test": True,
             "docs_url": p.docs_url,
+            "connect_only": p.provider in CONNECT_ONLY,
         }
         for p in sorted(verifier.CATALOG, key=lambda p: CATEGORY_ORDER.index(p.category))
     ]
@@ -468,8 +476,17 @@ def _meta_row(db: Session, tenant_id: str, actor_user_id: str) -> Integration:
     return record
 
 
+def _require_meta_access(db: Session, tenant_id: str) -> None:
+    # SPEC-BE-103: the Super admin can switch PilotSonic's Meta app off for a
+    # company. New sign-ins stop; an existing connection keeps its own token.
+    from app.services import platform_service
+
+    platform_service.require(tenant_id, "meta_app", db)
+
+
 def meta_connect_url(db: Session, tenant_id: str, actor_user_id: str) -> dict[str, Any]:
     _require_meta_app()
+    _require_meta_access(db, tenant_id)
     record = _meta_row(db, tenant_id, actor_user_id)
     nonce = secrets.token_urlsafe(16)
     settings = dict(record.settings or {})
@@ -514,6 +531,7 @@ def meta_callback(
     db: Session, tenant_id: str, actor_user_id: str, code: str, state: str
 ) -> dict[str, Any]:
     _require_meta_app()
+    _require_meta_access(db, tenant_id)
     record = _primary(_records(db, tenant_id, META))
     _check_state(record, tenant_id, actor_user_id, state)
     assert record is not None  # _check_state needs a record holding the nonce

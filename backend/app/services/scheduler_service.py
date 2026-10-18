@@ -169,6 +169,11 @@ def _run_with_session(job: Any, args: tuple[Any, ...], name: str) -> None:
         db.close()
 
 
+def inline_jobs() -> bool:
+    """True when run_soon runs jobs in the caller (tests, scripts, scheduler off)."""
+    return INLINE_JOBS or not get_scheduler().running
+
+
 def run_soon(job: Any, *args: Any, db: Session, name: str = "job") -> None:
     scheduler = get_scheduler()
     if INLINE_JOBS or not scheduler.running:

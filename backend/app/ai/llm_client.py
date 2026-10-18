@@ -59,15 +59,30 @@ class LLMClient:
         api_key = settings.LLM_API_KEY.get_secret_value()
         return api_key if api_key and api_key != "changeme" else None
 
+    def _check_access(self, db: Optional["Session"], tenant_id: Optional[str]) -> None:
+        # SPEC-BE-103: a company the Super admin switched AI off for gets no AI
+        # at all: not the software chain, not the .env provider, not a mock.
+        from app.services import platform_service
+
+        try:
+            blocked = not platform_service.allowed(str(tenant_id) if tenant_id else None, "ai", db)
+        except Exception:  # noqa: BLE001 - an unreadable store must not break the call
+            logger.warning("ai_access_unreadable")
+            return
+        if blocked:
+            raise LLMProviderError(platform_service.BLOCKED["ai"], 403)
+
     def _tenant_chain(self, db: Optional["Session"], tenant_id: Optional[str]) -> list[tuple[str, str, str]]:
-        # The company's own AI models (SPEC-BE-053), in fallback order. Passed
-        # explicitly: the tenant ContextVar is not visible inside FastAPI
-        # endpoints (checked 2026-09-30), so callers hand over db + tenant_id.
-        if db is None or not tenant_id:
-            return []
+        # PilotSonic's AI models (SPEC-BE-101: the Super admin's keys, the same
+        # for every company), in fallback order. With a session they're read in
+        # it; without one (callers that pass no company), from the store.
         from app.services.ai_model_service import resolve_chain
 
-        return resolve_chain(db, str(tenant_id))
+        try:
+            return resolve_chain(db, str(tenant_id) if tenant_id else None)
+        except Exception:  # noqa: BLE001 - an unreadable store must not break the call; .env / mock still apply
+            logger.warning("llm_chain_unavailable")
+            return []
 
     def _complete_chain(
         self,
@@ -78,9 +93,12 @@ class LLMClient:
         max_tokens: int,
         timeout_s: float,
         temperature: float | None = None,
+        images: list[tuple[str, bytes]] | None = None,
     ) -> LLMCompletion:
         # Try each enabled provider in order; any failure (error, timeout, 429,
         # 5xx, bad key) moves on to the next. The span records every attempt.
+        # A vision call (images) doesn't mark a provider as failing in AI Models:
+        # a text-only model refusing an image isn't a broken key.
         from app.ai import providers as llm_providers
         from app.services.ai_model_service import record_outcome
 
@@ -89,13 +107,15 @@ class LLMClient:
         for provider, api_key, model in chain:
             try:
                 text, input_tokens, output_tokens = llm_providers.call(
-                    provider, api_key, model, system_prompt, user_prompt, max_tokens, timeout_s, temperature
+                    provider, api_key, model, system_prompt, user_prompt, max_tokens, timeout_s, temperature, images
                 )
             except llm_providers.ProviderCallError as exc:
                 attempts.append({"provider": provider, "error": str(exc)[:200]})
-                record_outcome(tenant_id, provider, str(exc))
+                if not images:
+                    record_outcome(tenant_id, provider, str(exc))
                 continue
-            record_outcome(tenant_id, provider, None)
+            if not images:
+                record_outcome(tenant_id, provider, None)
             completion = LLMCompletion(
                 text=text,
                 provider=provider,
@@ -134,14 +154,15 @@ class LLMClient:
         db: Optional["Session"] = None,
         tenant_id: Optional[str] = None,
     ) -> str:
+        self._check_access(db, tenant_id)
         chain = self._tenant_chain(db, tenant_id)
-        if chain and tenant_id:
+        if chain:
             try:
                 return self._complete_chain(
-                    chain, str(tenant_id), system_prompt, user_prompt, max_tokens, DEFAULT_TIMEOUT_S
+                    chain, str(tenant_id or ""), system_prompt, user_prompt, max_tokens, DEFAULT_TIMEOUT_S
                 ).text
             except LLMProviderError:
-                logger.warning("Tenant AI models all failed; falling back to the .env provider.")
+                logger.warning("PilotSonic's AI models all failed; falling back to the .env provider.")
         api_key = self._real_api_key()
 
         if self.provider == "anthropic" and api_key:
@@ -157,6 +178,30 @@ class LLMClient:
 
         return self._complete_mock(system_prompt, user_prompt)
 
+    # Providers whose chat API takes images (SPEC-BE-096 FR4). Groq and Ollama
+    # are skipped: most of their models are text-only.
+    VISION_PROVIDERS = ("anthropic", "openai", "gemini", "openrouter")
+
+    def complete_vision(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        images: list[tuple[str, bytes]],
+        max_tokens: int = 1500,
+        timeout_s: float = 90.0,
+        *,
+        db: "Session",
+        tenant_id: str,
+    ) -> LLMCompletion:
+        """Text + images [(mime, bytes)] on PilotSonic's vision-capable models,
+        in their priority order. Raises LLMProviderError when none is set up or
+        all fail; there is no .env or mock fallback (SPEC-BE-088)."""
+        self._check_access(db, tenant_id)
+        chain = [c for c in self._tenant_chain(db, tenant_id) if c[0] in self.VISION_PROVIDERS]
+        if not chain:
+            raise LLMProviderError("PilotSonic has no AI model that can read images set up yet (Claude, OpenAI, Gemini or OpenRouter); the Super admin adds it.")
+        return self._complete_chain(chain, str(tenant_id), system_prompt, user_prompt, max_tokens, timeout_s, 0.0, images)
+
     def complete_with_usage(
         self,
         system_prompt: str,
@@ -168,7 +213,7 @@ class LLMClient:
         tenant_id: Optional[str] = None,
         temperature: float | None = None,
     ) -> LLMCompletion:
-        # 1) The company's AI models in fallback order (SPEC-BE-053); if all
+        # 1) PilotSonic's AI models in fallback order (SPEC-BE-053/101); if all
         #    fail, LLMProviderError names each failure.
         # 2) Otherwise the .env provider, unchanged. No mock fallback here: a
         #    failing or timed-out provider raises LLMProviderError so callers
@@ -177,10 +222,11 @@ class LLMClient:
         # Chat planner); a model that refuses it is asked once more without it.
         if self.provider == "fixture":
             return self._complete_fixture(user_prompt)
+        self._check_access(db, tenant_id)
         chain = self._tenant_chain(db, tenant_id)
-        if chain and tenant_id:
+        if chain:
             return self._complete_chain(
-                chain, str(tenant_id), system_prompt, user_prompt, max_tokens, timeout_s, temperature
+                chain, str(tenant_id or ""), system_prompt, user_prompt, max_tokens, timeout_s, temperature
             )
         api_key = self._real_api_key()
         started = time.perf_counter()

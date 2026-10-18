@@ -160,9 +160,13 @@ def expiry(seconds: Any) -> str | None:
     return (datetime.now(timezone.utc) + timedelta(seconds=value)).isoformat() if value > 0 else None
 
 
-def adapter(platform: str) -> Any:
+def adapter(platform: str, via: str | None = None) -> Any:
+    """The platform's module, or the SocialAPI publisher when the connection is
+    the company's SocialAPI account (SPEC-BE-104, `connection()["via"]`)."""
     import importlib
 
     if platform not in PLATFORMS:
         raise SocialError(f"{platform} publishing isn't supported.")
+    if via == "socialapi":
+        return importlib.import_module("app.integrations.socialapi_publisher")
     return importlib.import_module(f"app.integrations.{platform}")

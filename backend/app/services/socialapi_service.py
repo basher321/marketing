@@ -5,17 +5,31 @@ unchanged: posts made here live in SocialAPI (not in organic_contents /
 scheduled_posts), and the inbox is read live from SocialAPI (not copied into
 conversations), so nothing else in the app sees or changes them.
 
-Storage: tenants.settings["socialapi"] = {key_enc, brand_id, last_ok_at,
-last_error}. The key is Fernet-encrypted (utils/crypto), never returned (only
-masked) and never logged. Same pattern as the AI Models keys: no DDL needed.
+SPEC-BE-101: one master key, PilotSonic's (the Super admin's, platform_settings
+"socialapi"); companies never enter a key. On first use the master key creates
+the company's brand and a brand-restricted key for it, stored in
+tenants.settings["socialapi"] = {managed: true, key_enc, key_id, brand_id,
+last_ok_at, last_error} (a key the company once pasted is set aside as
+own_key_enc). Everything the company reads or writes goes through its restricted
+key, so SocialAPI itself hides other companies' brands (their ids are 404). Brand
+admin operations (connect / select / assign a Page) and account analytics (not
+allowed for restricted keys) use the master key with the company's own brand, or
+after the account was found in the company's own list. Keys are Fernet-encrypted
+(utils/crypto), never returned and never logged. No DDL.
 
-Brand: SocialAPI groups connected accounts into brands. The company's
-accounts are connected into one brand (found by the company name, else
-created) whose id is stored; listing shows every account the key can reach.
+Stale brands and keys (2026-10-11): the company's config records `master_fp`, a
+short SHA-256 of the master key its brand and key were made with. When the
+Super admin saves another master key (possibly another SocialAPI account), the
+next use makes the brand and key again under the new one. A company key that
+SocialAPI rejects (the brand or key was deleted in SocialAPI's dashboard) is
+rebuilt once and the call retried. Brands are found by name before one is
+created, so neither path makes duplicates.
 
 Audit rows use resource_type "tenant" (audit_log.resource_id is a uuid; the
 SocialAPI ids go into metadata). Message/comment/review text is never logged.
 """
+import hashlib
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -40,7 +54,8 @@ SETTINGS_KEY = "socialapi"
 STATE_TYPE = "socialapi_connect"
 STATE_TTL = timedelta(minutes=30)
 BAD_STATE = "This connection link expired or is invalid; start Connect again."
-NO_KEY = "Add your SocialAPI key first (Organic Marketing › SocialAPI)."
+NO_KEY = "SocialAPI isn't set up in PilotSonic yet (the Super admin adds the key)."
+PROVIDED = "SocialAPI is provided by PilotSonic; there's no key to add. Connect your pages below."
 LABEL = {
     "instagram": "Instagram", "facebook": "Facebook", "threads": "Threads", "tiktok": "TikTok",
     "linkedin": "LinkedIn", "youtube": "YouTube", "twitter": "X (Twitter)", "bluesky": "Bluesky",
@@ -81,11 +96,92 @@ def _decrypt(config: dict[str, Any]) -> str | None:
         return None
 
 
+def _master() -> str | None:
+    from app.services import platform_service
+
+    return platform_service.value("socialapi", "api_key") or None
+
+
 def _key(db: Session, tenant_id: str) -> str:
-    key = _decrypt(_config(_tenant(db, tenant_id)))
-    if key is None:
+    """The company's brand-restricted key, created with the master key on first use.
+    Every SocialAPI call passes here, so a company the Super admin switched off
+    is stopped here (SPEC-BE-103), before any brand or key is made."""
+    from app.services import platform_service
+
+    platform_service.require(tenant_id, "socialapi", db)
+    tenant = _tenant(db, tenant_id)
+    config = _config(tenant)
+    master = _master()
+    if config.get("managed"):
+        key = _decrypt(config)
+        # No master any more: keep using the key the company has (it may still work).
+        if key is not None and (master is None or config.get("master_fp") == _fingerprint(master)):
+            return key
+    if master is None:
         raise AppError(NO_KEY, 409)
-    return key
+    if config.get("master_fp") != _fingerprint(master) and (config.get("brand_id") or config.get("managed")):
+        # Made under another master key (or before fingerprints): its brand may not
+        # exist in this SocialAPI account. Find or make it again under this one.
+        _forget(db, tenant_id, brand=True, reason="master_changed")
+    brand_id = _brand_id(db, tenant_id, master)
+    try:
+        made = api.create_key(master, f"PilotSonic · {tenant.slug}"[:100], [brand_id], api.RESTRICTED_SCOPES)
+    except api.SocialAPIError as exc:
+        raise AppError(exc.message, exc.status_code) from None
+    raw = _str(made.get("raw_key"))
+    if not raw:
+        raise AppError("SocialAPI didn't return a key for this company.", 502)
+    tenant = _tenant(db, tenant_id)
+    config = _config(tenant)
+    if config.get("key_enc") and not config.get("managed"):
+        config["own_key_enc"] = config.pop("key_enc")  # a key the company pasted before SPEC-BE-101: set aside
+    config.update(managed=True, key_enc=encrypt_secret(raw), key_id=_str(made.get("id")), brand_id=brand_id,
+                  master_fp=_fingerprint(master), last_error=None, last_ok_at=_now().isoformat())
+    _save(tenant, config)
+    db.commit()
+    logger.info("socialapi_company_key_created", tenant_id=tenant_id)
+    return raw
+
+
+def _fingerprint(master: str) -> str:
+    """Which master key a company's brand and key were made with (never the key itself)."""
+    return hashlib.sha256(master.encode()).hexdigest()[:16]
+
+
+def _forget(db: Session, tenant_id: str, brand: bool, reason: str, master_fp: str | None = None) -> None:
+    """Drop the company's restricted key (and, with `brand`, its brand id) so
+    the next _key() makes them again. A kept brand was checked under the master
+    key `master_fp`, so it isn't dropped again for a missing fingerprint. Commits."""
+    tenant = _tenant(db, tenant_id)
+    config = _config(tenant)
+    for field in ("managed", "key_enc", "key_id", "master_fp", *(("brand_id",) if brand else ())):
+        config.pop(field, None)
+    if not brand and master_fp:
+        config["master_fp"] = master_fp
+    _save(tenant, config)
+    db.commit()
+    logger.info("socialapi_company_key_reset", tenant_id=tenant_id, reason=reason, brand=brand)
+
+
+def _heal(db: Session, tenant_id: str) -> bool:
+    """SocialAPI rejected the company's restricted key: rebuild it once under
+    the master key. The brand id is kept only when the brand still exists.
+    True when there is a new key to retry with."""
+    master = _master()
+    config = _config(_tenant(db, tenant_id))
+    if master is None or not config.get("managed"):
+        return False
+    try:
+        brand_ids = {str(b.get("id")) for b in api.list_brands(master)}
+    except api.SocialAPIError:
+        return False  # the master key itself fails: nothing to rebuild with
+    gone = str(config.get("brand_id")) not in brand_ids
+    _forget(db, tenant_id, brand=gone, reason="key_rejected", master_fp=_fingerprint(master))
+    try:
+        _key(db, tenant_id)
+    except AppError:
+        return False
+    return True
 
 
 def _now() -> datetime:
@@ -128,18 +224,26 @@ def _record(db: Session, tenant_id: str, error: str | None) -> None:
     db.commit()
 
 
-def _call(db: Session, tenant_id: str, fn: Any, *args: Any, **kwargs: Any) -> Any:
-    """Run a client call with the company's key; SocialAPI errors -> AppError
-    with SocialAPI's message. A rejected key is recorded on the key card."""
-    key = _key(db, tenant_id)
-    try:
-        return fn(key, *args, **kwargs)
-    except api.SocialAPIError as exc:
-        if exc.auth:
-            _record(db, tenant_id, exc.message)
-        logger.warning("socialapi_call_failed", tenant_id=tenant_id, call=getattr(fn, "__name__", "?"),
-                       status=exc.status_code, code=exc.code)
-        raise AppError(exc.message, exc.status_code) from None
+def _call(db: Session, tenant_id: str, fn: Any, *args: Any, master: bool = False, **kwargs: Any) -> Any:
+    """Run a client call with the company's restricted key (or, for brand admin
+    operations, the master key); SocialAPI errors -> AppError with SocialAPI's
+    message. A rejected company key is rebuilt once and the call retried (see the
+    module docstring); a key still rejected is recorded on the company's status."""
+    for attempt in (1, 2):
+        key = _key(db, tenant_id)
+        if master:
+            key = _master() or key
+        try:
+            return fn(key, *args, **kwargs)
+        except api.SocialAPIError as exc:
+            if exc.auth and not master and attempt == 1 and _heal(db, tenant_id):
+                continue
+            if exc.auth:
+                _record(db, tenant_id, exc.message)
+            logger.warning("socialapi_call_failed", tenant_id=tenant_id, call=getattr(fn, "__name__", "?"),
+                           status=exc.status_code, code=exc.code)
+            raise AppError(exc.message, exc.status_code) from None
+    raise AssertionError("unreachable")
 
 
 def _audit(db: Session, tenant_id: str, actor: str, action: str, **meta: Any) -> None:
@@ -152,45 +256,28 @@ def _audit(db: Session, tenant_id: str, actor: str, action: str, **meta: Any) ->
 # Key
 # ---------------------------------------------------------------------------
 def key_status(db: Session, tenant_id: str, account_count: int | None = None) -> dict[str, Any]:
+    """SPEC-BE-101: PilotSonic provides SocialAPI; the company sees whether it's
+    available, never a key."""
     config = _config(_tenant(db, tenant_id))
-    key = _decrypt(config)
-    status = "not_configured" if key is None else ("error" if config.get("last_error") else "connected")
+    ready = _master() is not None or bool(config.get("managed") and _decrypt(config))
+    status = "not_configured" if not ready else ("error" if config.get("last_error") else "connected")
     return {
         "status": status,
-        "key_masked": (("••••" + key[-4:]) if len(key) >= 8 else "••••") if key else None,
-        "last_ok_at": _ts(config.get("last_ok_at")) if key else None,
-        "last_error": config.get("last_error") if key else None,
+        "key_masked": None,
+        "last_ok_at": _ts(config.get("last_ok_at")) if ready else None,
+        "last_error": config.get("last_error") if ready else None,
         "account_count": account_count,
         "docs_url": api.DOCS_URL,
     }
 
 
 def save_key(db: Session, tenant_id: str, actor: str, api_key: str) -> dict[str, Any]:
-    """Test first (GET /accounts): a key SocialAPI rejects is not saved (422).
-    A network / SocialAPI outage still saves it, with the error shown."""
-    key = api_key.strip()
-    error: str | None = None
-    count: int | None = None
-    try:
-        count = len(api.list_accounts(key))
-    except api.SocialAPIError as exc:
-        if exc.auth:
-            raise AppError(exc.message, 422) from None
-        error = exc.message
-    tenant = _tenant(db, tenant_id)
-    config = _config(tenant)
-    if _decrypt(config) != key:
-        config.pop("brand_id", None)  # another SocialAPI account: find / create its brand again
-    config.update({"key_enc": encrypt_secret(key), "last_error": error})
-    if error is None:
-        config["last_ok_at"] = _now().isoformat()
-    _save(tenant, config)
-    _audit(db, tenant_id, actor, "key_saved", verified=error is None)
-    logger.info("socialapi_key_saved", tenant_id=tenant_id, verified=error is None)
-    return key_status(db, tenant_id, count)
+    """Gone (SPEC-BE-101): companies don't enter keys; PilotSonic provides SocialAPI."""
+    raise AppError(PROVIDED, 409)
 
 
 def test_key(db: Session, tenant_id: str, actor: str) -> dict[str, Any]:
+    """Checks the company's access (SPEC-BE-101: PilotSonic's key, the company's brand)."""
     key = _key(db, tenant_id)
     count: int | None = None
     try:
@@ -198,18 +285,20 @@ def test_key(db: Session, tenant_id: str, actor: str) -> dict[str, Any]:
         error = None
     except api.SocialAPIError as exc:
         error = exc.message
+        if exc.auth and _heal(db, tenant_id):
+            try:
+                count = len(api.list_accounts(_key(db, tenant_id)))
+                error = None
+            except api.SocialAPIError as again:
+                error = again.message
     _record(db, tenant_id, error)
     _audit(db, tenant_id, actor, "key_tested", verified=error is None)
     return key_status(db, tenant_id, count)
 
 
 def delete_key(db: Session, tenant_id: str, actor: str) -> None:
-    tenant = _tenant(db, tenant_id)
-    if not _config(tenant).get("key_enc"):
-        raise NotFoundError("No SocialAPI key is saved.")
-    # The accounts stay connected in SocialAPI; only this app forgets the key.
-    _save(tenant, {})
-    _audit(db, tenant_id, actor, "key_removed")
+    """Gone (SPEC-BE-101): there's no company key to remove."""
+    raise AppError(PROVIDED, 409)
 
 
 # ---------------------------------------------------------------------------
@@ -234,11 +323,36 @@ def _connectable() -> list[dict[str, str]]:
 
 
 def list_accounts(db: Session, tenant_id: str) -> dict[str, Any]:
-    if _decrypt(_config(_tenant(db, tenant_id))) is None:
+    from app.services import platform_service
+
+    platform_service.require(tenant_id, "socialapi", db)  # SPEC-BE-103
+    config = _config(_tenant(db, tenant_id))
+    if _master() is None and not (config.get("managed") and _decrypt(config)):
         return {"configured": False, "items": [], "connectable": _connectable()}
     rows = _call(db, tenant_id, api.list_accounts)
     items = sorted((_account(a) for a in rows if a.get("id")), key=lambda a: (a["platform"], a["name"] or ""))
+    _fill_facebook_pages(db, tenant_id, items)
     return {"configured": True, "items": items, "connectable": _connectable()}
+
+
+def _fill_facebook_pages(db: Session, tenant_id: str, items: list[dict[str, Any]]) -> None:
+    """The live GET /accounts never carries page_name (only our dev fakes did), so a
+    Facebook account always looked Page-less. Its Page(s) are the login's Pages whose
+    assigned_account_id is this account (there is no GET /accounts/{id}). A failed
+    lookup leaves page_name empty, i.e. the old "choose its Page" state."""
+    choices: dict[str, list[dict[str, Any]]] = {}
+    for a in items:
+        if a["platform"] != "facebook" or a["page_name"] or not a["login_id"]:
+            continue
+        login = a["login_id"]
+        if login not in choices:
+            try:
+                choices[login] = _call(db, tenant_id, api.login_choices, "facebook", login, master=True)
+            except Exception as exc:  # noqa: BLE001 - only a label; never break the account list
+                logger.warning("socialapi_facebook_pages_unavailable", tenant_id=tenant_id, error=type(exc).__name__)
+                choices[login] = []
+        names = [c["name"] for c in choices[login] if c.get("assigned_account_id") == a["id"]]
+        a["page_name"] = ", ".join(names) or None
 
 
 def _accounts_by_id(db: Session, tenant_id: str) -> dict[str, dict[str, Any]]:
@@ -246,13 +360,16 @@ def _accounts_by_id(db: Session, tenant_id: str) -> dict[str, dict[str, Any]]:
 
 
 def _brand_id(db: Session, tenant_id: str, key: str) -> str:
+    """The company's brand, created with the master key on first use. Named
+    "<company> (<slug>)" so two companies with the same name never share one."""
     tenant = _tenant(db, tenant_id)
     config = _config(tenant)
     if config.get("brand_id"):
         return str(config["brand_id"])
+    name = f"{tenant.name} ({tenant.slug})"[:100]
     try:
-        brand = next((b for b in api.list_brands(key) if (b.get("name") or "").strip() == tenant.name.strip()), None)
-        brand = brand or api.create_brand(key, tenant.name[:100])
+        brand = next((b for b in api.list_brands(key) if (b.get("name") or "").strip() == name), None)
+        brand = brand or api.create_brand(key, name)
     except api.SocialAPIError as exc:
         raise AppError(exc.message, exc.status_code) from None
     brand_id = _str(brand.get("id") or brand.get("brand_id")) if isinstance(brand, dict) else None
@@ -286,9 +403,10 @@ def _check_state(tenant_id: str, actor: str, state: str) -> dict[str, Any]:
 
 
 def connect(db: Session, tenant_id: str, actor: str, platform: str) -> dict[str, Any]:
-    key = _key(db, tenant_id)
-    brand_id = _brand_id(db, tenant_id, key)
-    result = _call(db, tenant_id, api.connect, platform, brand_id, _redirect_uri(), _state(tenant_id, actor, platform))
+    _key(db, tenant_id)  # makes the company's brand and key on first use
+    brand_id = _brand_id(db, tenant_id, _master() or _key(db, tenant_id))
+    # A brand admin operation: the master key, into the company's own brand only.
+    result = _call(db, tenant_id, api.connect, platform, brand_id, _redirect_uri(), _state(tenant_id, actor, platform), master=True)
     _audit(db, tenant_id, actor, "connect_started", platform=platform)
     auth_url = _str(result.get("auth_url")) if isinstance(result, dict) else None
     if auth_url:
@@ -308,9 +426,10 @@ def callback(db: Session, tenant_id: str, actor: str, payload: s.CallbackRequest
     if payload.status == "selection_required":
         if platform not in ("facebook", "google") or not payload.connection_id:
             raise AppError("SocialAPI asked for a choice this app can't show; finish it in SocialAPI's dashboard.", 422)
-        choices = _call(db, tenant_id, api.pending_choices, platform, payload.connection_id)
+        choices = _call(db, tenant_id, api.pending_choices, platform, payload.connection_id, master=True)
         return {"status": "selection_required", "platform": platform, "account_id": None,
                 "connection_id": payload.connection_id, "choices": choices}
+    _organic_cache.pop(str(tenant_id), None)
     _audit(db, tenant_id, actor, "account_connected", platform=platform, account_id=payload.account_id)
     return {"status": "connected", "platform": platform, "account_id": payload.account_id,
             "connection_id": None, "choices": []}
@@ -320,8 +439,9 @@ def select(db: Session, tenant_id: str, actor: str, payload: s.SelectRequest) ->
     _check_state(tenant_id, actor, payload.state)
     # The brand was set when the sign-in started (connect); the pending
     # connection is promoted into an account of that brand.
-    result = _call(db, tenant_id, api.select_pending, payload.platform, payload.connection_id, payload.choice_id)
+    result = _call(db, tenant_id, api.select_pending, payload.platform, payload.connection_id, payload.choice_id, master=True)
     account_id = _str(result.get("account_id")) if isinstance(result, dict) else None
+    _organic_cache.pop(str(tenant_id), None)
     _audit(db, tenant_id, actor, "account_connected", platform=payload.platform, account_id=account_id)
     return {"account_id": account_id}
 
@@ -339,15 +459,16 @@ def facebook_pages(db: Session, tenant_id: str, account_id: str) -> dict[str, An
     """The Pages a connected Facebook login manages. The account's name is the
     login's own (personal) name; page_name is set only once one Page is active."""
     _, login_id = _facebook_login(db, tenant_id, account_id)
-    return {"items": _call(db, tenant_id, api.login_choices, "facebook", login_id)}
+    return {"items": _call(db, tenant_id, api.login_choices, "facebook", login_id, master=True)}
 
 
 def choose_facebook_page(db: Session, tenant_id: str, actor: str, account_id: str, page_id: str) -> dict[str, Any]:
     """Assign one of the login's Pages to the company's brand, so posts go to it."""
     _, login_id = _facebook_login(db, tenant_id, account_id)
-    brand_id = _brand_id(db, tenant_id, _key(db, tenant_id))
-    result = _call(db, tenant_id, api.assign_choice, "facebook", login_id, page_id, brand_id)
+    brand_id = _brand_id(db, tenant_id, _master() or _key(db, tenant_id))
+    result = _call(db, tenant_id, api.assign_choice, "facebook", login_id, page_id, brand_id, master=True)
     new_id = (_str(result.get("account_id")) if isinstance(result, dict) else None) or account_id
+    _organic_cache.pop(str(tenant_id), None)
     _audit(db, tenant_id, actor, "facebook_page_chosen", account_id=new_id, page_id=page_id)
     return {"account_id": new_id}
 
@@ -357,7 +478,65 @@ def disconnect(db: Session, tenant_id: str, actor: str, account_id: str) -> None
     if account_id not in accounts:
         raise NotFoundError("Account not found.")
     _call(db, tenant_id, api.disconnect, account_id)
+    _organic_cache.pop(str(tenant_id), None)
     _audit(db, tenant_id, actor, "account_disconnected", platform=accounts[account_id]["platform"], account_id=account_id)
+
+
+# ---------------------------------------------------------------------------
+# Organic Marketing and Command Chat through SocialAPI (SPEC-BE-104)
+# ---------------------------------------------------------------------------
+ORGANIC_PLATFORMS = ("facebook", "instagram", "tiktok", "linkedin")
+ORGANIC_TTL_S = 60.0
+_organic_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+
+
+def organic_problem(account: dict[str, Any]) -> str | None:
+    """Why an account can't take organic posts yet, or None."""
+    if account.get("reconnect_reason"):
+        return f"Reconnect it in Organic › SocialAPI ({account['reconnect_reason']})."
+    if str(account.get("status") or "active") not in ("active", "connected"):
+        return f"Its SocialAPI status is {account.get('status')}; reconnect it in Organic › SocialAPI."
+    if account.get("platform") == "facebook" and not account.get("page_name"):
+        # A Facebook login posts to a Page only once one is chosen (SPEC-BE-083).
+        return "Choose its Facebook Page in Organic › SocialAPI."
+    return None
+
+
+def organic_accounts(db: Session, tenant_id: str) -> dict[str, dict[str, Any]]:
+    """{platform: account} for Organic Marketing: the first usable account per
+    platform, else the first one (shown with its problem). Only for a company
+    that already has its brand and may use SocialAPI: viewing a page never makes
+    a brand. Any SocialAPI error means "no account" (logged), never a broken page."""
+    from app.services import platform_service
+
+    try:
+        if not platform_service.allowed(tenant_id, "socialapi", db):
+            return {}
+        config = _config(_tenant(db, tenant_id))
+        if not (config.get("managed") and config.get("brand_id")):
+            return {}
+        hit = _organic_cache.get(str(tenant_id))
+        if hit and time.monotonic() - hit[0] < ORGANIC_TTL_S:
+            items = hit[1]
+        else:
+            items = list_accounts(db, tenant_id)["items"]
+            _organic_cache[str(tenant_id)] = (time.monotonic(), items)
+    except Exception as exc:  # noqa: BLE001 - SocialAPI trouble must never break Organic Marketing
+        logger.warning("socialapi_organic_accounts_unavailable", tenant_id=tenant_id, error=type(exc).__name__)
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for a in items:
+        p = a.get("platform")
+        if p not in ORGANIC_PLATFORMS:
+            continue
+        if p not in out or (organic_problem(out[p]) and not organic_problem(a)):
+            out[p] = a
+    return out
+
+
+def organic_key(db: Session, tenant_id: str) -> str:
+    """The company's restricted key, for the organic publisher (never returned)."""
+    return _key(db, tenant_id)
 
 
 def boards(db: Session, tenant_id: str, account_id: str) -> dict[str, Any]:
@@ -370,9 +549,13 @@ def boards(db: Session, tenant_id: str, account_id: str) -> dict[str, Any]:
 
 
 def account_analytics(db: Session, tenant_id: str, account_id: str, days: int) -> dict[str, Any]:
+    # Analytics isn't allowed for restricted keys: the master key, only for an
+    # account found in the company's own (restricted) list (SPEC-BE-101).
+    if account_id not in _accounts_by_id(db, tenant_id):
+        raise NotFoundError("Account not found.")
     end = datetime.now(timezone.utc).date()
     start = end - timedelta(days=days - 1)
-    data = _call(db, tenant_id, api.account_analytics, account_id, start.isoformat(), end.isoformat())
+    data = _call(db, tenant_id, api.account_analytics, account_id, start.isoformat(), end.isoformat(), master=True)
     series = []
     for row in data.get("series") or []:
         if not isinstance(row, dict) or not row.get("metric"):

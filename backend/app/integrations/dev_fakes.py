@@ -235,6 +235,29 @@ def _meta(request: httpx.Request) -> httpx.Response:
     return _json({"error": {"message": f"Fake Meta has no fixture for {method} {path}", "code": 100}}, 400)
 
 
+# SPEC-BE-098 store products: STORE_CALLS records (store, operation); STORE_FAIL
+# = {"shopify": "<mutation name>"} or {"woocommerce": "POST"|"PUT"} answers that call with an error.
+STORE_CALLS: list[tuple[str, str]] = []
+STORE_FAIL: dict[str, str] = {}
+
+
+def _shopify_product(body: dict[str, Any]) -> httpx.Response | None:
+    query = body.get("query", "")
+    for op in ("productCreate", "productUpdate", "productVariantsBulkUpdate", "productDelete"):
+        if f"{op}(" in query:
+            STORE_CALLS.append(("shopify", op))
+            if STORE_FAIL.get("shopify") == op:
+                return _json({"data": {op: {"userErrors": [{"field": ["price"], "message": "Fake Shopify: rejected by the injected failure"}]}}})
+            pid = (body.get("variables", {}).get("product") or {}).get("id") or f"gid://shopify/Product/{_new_id()}"
+            node = {"id": pid, "handle": "fake-product", "onlineStoreUrl": "https://fake-shop.myshopify.com/products/fake-product",
+                    "variants": {"nodes": [{"id": "gid://shopify/ProductVariant/1"}]}}
+            payload = {"productCreate": {"product": node, "userErrors": []}, "productUpdate": {"product": node, "userErrors": []},
+                       "productVariantsBulkUpdate": {"productVariants": [{"id": "gid://shopify/ProductVariant/1"}], "userErrors": []},
+                       "productDelete": {"deletedProductId": pid, "userErrors": []}}[op]
+            return _json({"data": {op: payload}})
+    return None
+
+
 def _shopify(request: httpx.Request) -> httpx.Response:
     currency = get_settings().META_FAKE_CURRENCY
     if request.url.path.endswith("/oauth/access_token"):
@@ -242,6 +265,9 @@ def _shopify(request: httpx.Request) -> httpx.Response:
     if request.url.path.endswith("/shop.json"):
         return _json({"shop": {"name": "Fake Shopify store"}})
     body = json.loads(request.content or b"{}")
+    product_answer = _shopify_product(body)
+    if product_answer is not None:
+        return product_answer
     if "deliveryProfileUpdate" in body.get("query", ""):
         return _json({"data": {"deliveryProfileUpdate": {"profile": {"id": "gid://shopify/DeliveryProfile/1"}, "userErrors": []}}})
     if "deliveryProfiles(first: 10)" in body.get("query", ""):
@@ -267,6 +293,12 @@ def _woo(request: httpx.Request) -> httpx.Response:
         return _json({"environment": {"site_url": "https://fake-woo.example"}})
     if "woocommerce_currency" in p:
         return _json({"value": get_settings().META_FAKE_CURRENCY})
+    if "/products" in p and request.method in ("POST", "PUT"):  # SPEC-BE-098
+        STORE_CALLS.append(("woocommerce", request.method))
+        if STORE_FAIL.get("woocommerce") == request.method:
+            return _json({"code": "woocommerce_rest_invalid", "message": "Fake WooCommerce: rejected by the injected failure"}, 400)
+        pid = int(p.rsplit("/", 1)[-1]) if request.method == "PUT" else int(_new_id()) % 100000 + 1
+        return _json({"id": pid, "permalink": f"https://fake-woo.example/product/{pid}"})
     if request.method in ("POST", "PUT"):
         return _json({"id": int(_new_id()) % 1000, "instance_id": int(_new_id()) % 1000})
     if p.endswith("/shipping/zones"):
@@ -778,7 +810,11 @@ def _gemini(request: httpx.Request, path: str) -> httpx.Response:
 # SocialAPI.ai (SPEC-BE-083): accounts, brands, connect (the auth_url points
 # straight back at our redirect_uri, as a finished sign-in would), posts,
 # media, metrics, analytics and the inbox. The key "sapi_key_bad" answers 401.
+# SPEC-BE-101: POST /keys makes a brand-restricted key ("sapi_scoped_<id>"); such a
+# key sees only its brands' accounts, posts and inbox (other ids are 404) and
+# can't create brands or keys, as the real API documents.
 _sapi: dict[str, Any] = {}
+SAPI_RESTRICTED_DENIED = ("analytics",)
 
 
 def _sapi_now() -> str:
@@ -790,6 +826,7 @@ def _sapi_state() -> dict[str, Any]:
         now = _sapi_now()
         _sapi.update({
             "brands": [],
+            "keys": {},
             "accounts": [
                 {"id": "acc_fake_ig", "platform": "instagram", "name": "Fake Shop", "username": "fakeshop", "status": "active"},
                 {"id": "acc_fake_fb", "platform": "facebook", "name": "Fake Shop Page", "username": "fakeshop", "status": "active",
@@ -854,8 +891,33 @@ def _socialapi(request: httpx.Request, path: str) -> httpx.Response:
     method, body = request.method, _body(request) or {}
     page = {"has_more": False, "next_cursor": ""}
     parts = path.strip("/").split("/")
+    raw_key = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+    scope = st["keys"].get(raw_key, {}).get("brand_ids") if raw_key.startswith("sapi_scoped_") else None
+    if raw_key.startswith("sapi_scoped_") and scope is None:
+        return _json({"error": {"code": "auth.invalid_key", "message": "Invalid API key"}}, 401)
+    mine = {a["id"] for a in st["accounts"] if scope is None or a.get("brand_id") in scope}
+    not_found = _json({"error": {"code": "resource.not_found", "message": "Not found"}}, 404)
+    if scope is not None:
+        if path in ("/brands", "/keys") and method == "POST":
+            return _json({"error": {"code": "auth.forbidden", "message": "Admin operation"}}, 403)
+        if parts[0] == "accounts" and len(parts) >= 2 and parts[1] not in ("connect", "pending") and parts[1] not in mine:
+            return not_found
+        if parts[0] == "accounts" and parts[-1] in SAPI_RESTRICTED_DENIED:
+            return _json({"error": {"code": "auth.scope", "message": "Not available to brand-restricted keys"}}, 403)
+        if parts[0] == "posts" and len(parts) >= 2 and parts[1] in st["posts"] and not any(
+                t["account_id"] in mine for t in st["posts"][parts[1]]["targets"]):
+            return not_found
+        if path == "/posts" and method == "POST" and not all(t.get("account_id") in mine for t in body.get("targets") or []):
+            return not_found
+    if path == "/keys" and method == "POST":
+        kid = _new_id()
+        raw = f"sapi_scoped_{kid}"
+        st["keys"][raw] = {"id": f"key_{kid}", "brand_ids": list(body.get("brand_ids") or [])}
+        return _json({"id": f"key_{kid}", "name": body.get("name"), "scopes": body.get("scopes") or [],
+                      "brand_ids": body.get("brand_ids") or [], "raw_key": raw, "message": "This key will not be shown again."}, 201)
     if path == "/accounts" and method == "GET":
-        return _json({"count": len(st["accounts"]), "data": st["accounts"]})
+        rows = [a for a in st["accounts"] if a["id"] in mine]
+        return _json({"count": len(rows), "data": rows})
     if path == "/brands":
         if method == "POST":
             brand = {"id": f"brand_fake_{_new_id()}", "name": body.get("name")}
@@ -868,9 +930,11 @@ def _socialapi(request: httpx.Request, path: str) -> httpx.Response:
         if platform in ("facebook", "google"):
             cid = f"pc_fake_{_new_id()}"
             st.setdefault("pending", {})[cid] = platform
+            st.setdefault("pending_brand", {})[cid] = body.get("brand_id")
             q.update({"status": "selection_required", "connection_id": cid})
         else:
-            acct = {"id": f"acc_fake_{_new_id()}", "platform": platform, "name": f"Fake {platform}", "username": "fake", "status": "active"}
+            acct = {"id": f"acc_fake_{_new_id()}", "platform": platform, "name": f"Fake {platform}", "username": "fake", "status": "active",
+                    "brand_id": body.get("brand_id")}
             st["accounts"].append(acct)
             q.update({"status": "success", "account_id": acct["id"]})
         return _json({"auth_url": str(httpx.URL(body.get("redirect_uri", "http://localhost:3000/")).copy_merge_params(q))}, 202)
@@ -889,7 +953,8 @@ def _socialapi(request: httpx.Request, path: str) -> httpx.Response:
         st["pending"].pop(parts[2])
         name = f"Fake {platform} page"
         acct = {"id": f"acc_fake_{_new_id()}", "platform": platform, "name": name, "status": "active",
-                "page_name": name if platform == "facebook" else None, "login_id": f"login_fake_{platform}"}
+                "page_name": name if platform == "facebook" else None, "login_id": f"login_fake_{platform}",
+                "brand_id": st.get("pending_brand", {}).get(parts[2])}
         st["accounts"].append(acct)
         return _json({"account_id": acct["id"], "display_name": name, "platform": platform, "username": ""}, 201)
     if parts[:1] == ["platforms"] and len(parts) >= 5:
@@ -904,7 +969,8 @@ def _socialapi(request: httpx.Request, path: str) -> httpx.Response:
         if same_login is not None:  # a Page chosen for an already connected login
             same_login["page_name"] = f"Fake {platform} {'one' if parts[5] == 'fake-1' else 'two'}"
             return _json({"account_id": same_login["id"], "brand_id": body.get("brand_id"), "platform_page_id": parts[5]}, 201)
-        acct = {"id": f"acc_fake_{_new_id()}", "platform": platform, "name": f"Fake {platform} page", "status": "active"}
+        acct = {"id": f"acc_fake_{_new_id()}", "platform": platform, "name": f"Fake {platform} page", "status": "active",
+                "brand_id": body.get("brand_id")}
         st["accounts"].append(acct)
         return _json({"account_id": acct["id"], "brand_id": body.get("brand_id")}, 201)
     if parts[0] == "accounts" and len(parts) >= 2:
@@ -942,7 +1008,8 @@ def _socialapi(request: httpx.Request, path: str) -> httpx.Response:
             post = _sapi_post(body, st)
             st["posts"][post["id"]] = post
             return _json(post, 201)
-        items = sorted(st["posts"].values(), key=lambda p: p["created_at"], reverse=True)
+        items = sorted((p for p in st["posts"].values() if any(t["account_id"] in mine for t in p["targets"]) or scope is None),
+                       key=lambda p: p["created_at"], reverse=True)
         wanted = request.url.params.get("status")
         return _json({"data": [p for p in items if not wanted or p["status"] == wanted], "pagination": page})
     if parts[0] == "posts" and len(parts) >= 2:
@@ -960,7 +1027,7 @@ def _socialapi(request: httpx.Request, path: str) -> httpx.Response:
             return _json({"data": {"post_id": post["id"], "targets": post["targets"]}})
         return _json(post)
     if path == "/inbox/conversations":
-        return _json({"data": st["conversations"], "pagination": page, "sync_state": "idle"})
+        return _json({"data": [c for c in st["conversations"] if c.get("account_id") in mine], "pagination": page, "sync_state": "idle"})
     if parts[:2] == ["inbox", "conversations"] and parts[-1] == "messages":
         thread = st["messages"].setdefault(parts[2], [])
         if method == "POST":
@@ -970,7 +1037,7 @@ def _socialapi(request: httpx.Request, path: str) -> httpx.Response:
             return _json({"success": True, "message_ids": [mid]})
         return _json({"data": list(reversed(thread)), "pagination": page})
     if path == "/inbox/comments":
-        return _json({"data": st["commented"], "pagination": page})
+        return _json({"data": [c for c in st["commented"] if c.get("account_id") in mine], "pagination": page})
     if parts[:2] == ["inbox", "comments"] and len(parts) >= 3:
         thread = st["comments"].setdefault(parts[2], [])
         if len(parts) == 3 and method == "POST":

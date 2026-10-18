@@ -8,7 +8,6 @@ import { Empty, StatusBadge, errorText } from "@/components/organic/shared";
 import {
   connectAccount,
   createPost,
-  deleteKey,
   deletePost,
   disconnectAccount,
   fetchAccountAnalytics,
@@ -22,7 +21,6 @@ import {
   publishPost,
   retryPost,
   SAPI_CHANNEL,
-  saveKey,
   sapiKeys,
   testKey,
 } from "@/lib/api/socialapi";
@@ -37,82 +35,43 @@ const when = (v: string | null) => (v ? new Date(v).toLocaleString() : "—");
 const SAPI_BADGE: Record<string, string> = { active: "connected", reconnect_required: "expired", partial: "publishing" };
 const badge = (s: string) => SAPI_BADGE[s] ?? s;
 
+// SPEC-FE-068 / SPEC-BE-101: SocialAPI is PilotSonic's (the Super admin's master
+// key); each company gets its own brand-restricted access, so there's no key to
+// add here. "Check access" makes it on first use and reports the accounts found.
 export function KeyCard() {
   const qc = useQueryClient();
   const key = useQuery({ queryKey: sapiKeys.key, queryFn: fetchKey });
-  const [value, setValue] = useState("");
-  // The outcome of the last Save / Test / Remove, always shown (success too).
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
-  const refresh = () => void qc.invalidateQueries({ queryKey: sapiKeys.all });
-  const outcome = (verb: string) => (r: KeyStatus) => {
-    refresh();
-    const count = r.account_count != null ? ` · ${r.account_count} account${r.account_count === 1 ? "" : "s"} found` : "";
-    setNote(r.last_error ? { ok: false, text: `${verb}, but SocialAPI answered: ${r.last_error}` } : { ok: true, text: `${verb}: the key works${count}.` });
-  };
-  const failed = (e: unknown) => setNote({ ok: false, text: errorText(e) });
-  const save = useMutation({ mutationFn: () => saveKey(value.trim()), onSuccess: (r) => { setValue(""); outcome("Saved and tested")(r); }, onError: failed });
-  const test = useMutation({ mutationFn: testKey, onSuccess: outcome("Tested"), onError: failed });
-  const remove = useMutation({ mutationFn: deleteKey, onSuccess: () => { refresh(); setNote({ ok: true, text: "Key removed." }); }, onError: failed });
+  const test = useMutation({
+    mutationFn: testKey,
+    onSuccess: (r: KeyStatus) => {
+      void qc.invalidateQueries({ queryKey: sapiKeys.all });
+      const count = r.account_count != null ? ` · ${r.account_count} account${r.account_count === 1 ? "" : "s"} connected` : "";
+      setNote(r.last_error ? { ok: false, text: `SocialAPI answered: ${r.last_error}` } : { ok: true, text: `SocialAPI works${count}.` });
+    },
+    onError: (e: unknown) => setNote({ ok: false, text: errorText(e) }),
+  });
   const k = key.data;
-  const busy = save.isPending || test.isPending || remove.isPending;
+  const ready = k && k.status !== "not_configured";
   return (
     <section className="card mb-4" data-testid="sapi-key">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="font-semibold">SocialAPI key</span>
+        <span className="font-semibold">SocialAPI</span>
         {k && <StatusBadge status={k.status === "connected" ? "connected" : k.status === "error" ? "error" : "not_connected"} />}
-        {k?.key_masked && <span className="text-xs text-muted">{k.key_masked}</span>}
-        {k?.account_count != null && <span className="text-xs text-muted">· {k.account_count} accounts</span>}
-        {k && (
-          <a href={k.docs_url} target="_blank" rel="noreferrer" className="ml-auto text-xs text-accent underline">
-            SocialAPI docs ↗
-          </a>
-        )}
+        <span className="text-xs text-muted">Provided by PilotSonic</span>
       </div>
       <p className="m-0 mb-2 text-xs text-muted">
-        Paste the API key from your SocialAPI.ai dashboard (it starts with <code>sapi_key_</code>). It is stored encrypted and never shown again.
-        SocialAPI publishes organic posts and answers comments, DMs and reviews; it has no paid-ads features.
+        {ready
+          ? "There's no key to add: connect your pages and post. SocialAPI publishes organic posts and answers comments, DMs and reviews; it has no paid-ads features."
+          : "SocialAPI isn't set up in PilotSonic yet (the Super admin adds it)."}
       </p>
       {k?.last_error && <p className="m-0 mb-2 text-xs text-danger">{k.last_error}</p>}
-      {k?.last_ok_at && <p className="m-0 mb-2 text-xs text-muted">Last worked: {when(k.last_ok_at)}</p>}
-      <form
-        className="flex flex-wrap gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          setNote(null);
-          if (value.trim()) save.mutate();
-          else setNote({ ok: false, text: k?.key_masked ? "Paste a new key to replace the saved one, or use Test to check the saved key." : "Paste your SocialAPI key first." });
-        }}
-      >
-        <input
-          type="password"
-          autoComplete="off"
-          className="min-w-[260px] flex-1"
-          placeholder={k?.key_masked ? "Paste a new key to replace it" : "sapi_key_…"}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          aria-label="SocialAPI key"
-        />
-        <button type="submit" className="btn" disabled={busy}>
-          {save.isPending ? "Saving & testing…" : "Save & test"}
+      {ready && (
+        <button type="button" className="btn btn-secondary btn-sm" disabled={test.isPending} onClick={() => { setNote(null); test.mutate(); }}>
+          {test.isPending ? "Checking…" : "Check access"}
         </button>
-        {k?.key_masked && (
-          <>
-            <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => { setNote(null); test.mutate(); }}>
-              {test.isPending ? "Testing…" : "Test"}
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled={busy}
-              onClick={() => { setNote(null); if (window.confirm("Remove the SocialAPI key? Accounts stay connected in SocialAPI.")) remove.mutate(); }}
-            >
-              Remove
-            </button>
-          </>
-        )}
-      </form>
-      {busy && <p className="m-0 mt-2 text-xs text-muted">Checking the key with SocialAPI…</p>}
-      {note && !busy && (
+      )}
+      {note && !test.isPending && (
         <p className={`m-0 mt-2 text-xs ${note.ok ? "text-success" : "text-danger"}`} role="status" data-testid="sapi-key-note">
           {note.text}
         </p>

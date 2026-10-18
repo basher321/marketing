@@ -48,26 +48,30 @@ export function disconnectIntegration(provider: string): Promise<void> {
   return apiFetch<void>(`/api/v1/integrations/${encodeURIComponent(provider)}`, { method: "DELETE" });
 }
 
-export function fetchAIModels(): Promise<AIModelList> {
-  return apiFetch<AIModelList>("/api/v1/ai-models");
+/** The company's read-only view (SPEC-BE-101); the Super admin edits under PLATFORM_AI_BASE. */
+export const AI_BASE = "/api/v1/ai-models";
+export const PLATFORM_AI_BASE = "/api/v1/platform/ai-models";
+
+export function fetchAIModels(base: string = AI_BASE): Promise<AIModelList> {
+  return apiFetch<AIModelList>(base);
 }
 
-export function updateAIModel(provider: AIProvider, body: AIModelUpdate): Promise<AIModelList> {
-  return apiFetch<AIModelList>(`/api/v1/ai-models/${provider}`, { method: "PUT", body: { ...body } });
+export function updateAIModel(provider: AIProvider, body: AIModelUpdate, base: string = AI_BASE): Promise<AIModelList> {
+  return apiFetch<AIModelList>(`${base}/${provider}`, { method: "PUT", body: { ...body } });
 }
 
-export function setAIModelOrder(order: AIProvider[]): Promise<AIModelList> {
-  return apiFetch<AIModelList>("/api/v1/ai-models/order", { method: "PUT", body: { order } });
+export function setAIModelOrder(order: AIProvider[], base: string = AI_BASE): Promise<AIModelList> {
+  return apiFetch<AIModelList>(`${base}/order`, { method: "PUT", body: { order } });
 }
 
-export function fetchProviderModels(provider: AIProvider): Promise<ProviderModels> {
-  return apiFetch<ProviderModels>(`/api/v1/ai-models/${provider}/models`);
+export function fetchProviderModels(provider: AIProvider, base: string = AI_BASE): Promise<ProviderModels> {
+  return apiFetch<ProviderModels>(`${base}/${provider}/models`);
 }
 
-export function testAIModel(provider: AIProvider): Promise<AIModelTestResult> {
-  return apiFetch<AIModelTestResult>(`/api/v1/ai-models/${provider}/test`, { method: "POST" });
+export function testAIModel(provider: AIProvider, base: string = AI_BASE): Promise<AIModelTestResult> {
+  return apiFetch<AIModelTestResult>(`${base}/${provider}/test`, { method: "POST" });
 }
 
-export function deleteAIModelKey(provider: AIProvider): Promise<AIModelList> {
-  return apiFetch<AIModelList>(`/api/v1/ai-models/${provider}`, { method: "DELETE" });
+export function deleteAIModelKey(provider: AIProvider, base: string = AI_BASE): Promise<AIModelList> {
+  return apiFetch<AIModelList>(`${base}/${provider}`, { method: "DELETE" });
 }

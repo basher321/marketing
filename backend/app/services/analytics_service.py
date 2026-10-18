@@ -740,7 +740,13 @@ def import_organic_metrics(db: Session, tenant_id: str, actor_user_id: str | Non
             continue
         try:
             conn = social_account_service.connection(db, tenant_id, platform)
-            metrics = adapter(platform).metrics(conn["fields"], [str(p.external_post_id) for p in posts])
+            # SPEC-BE-104: only posts published the way the account is connected now
+            # (a SocialAPI post's external id is SocialAPI's post id, not the platform's).
+            via = conn.get("via") or "direct"
+            posts = [p for p in posts if ((p.extra_metadata or {}).get("via") or "direct") == via]
+            if not posts:
+                continue
+            metrics = adapter(platform, via).metrics(conn["fields"], [str(p.external_post_id) for p in posts])
         except (SocialError, AppError) as exc:
             stats["errors"].append(f"{platform}: {getattr(exc, 'message', None) or getattr(exc, 'detail', str(exc))}")
             continue

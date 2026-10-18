@@ -5,10 +5,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { approveApproval, approveGroup, rejectApproval } from "@/lib/api/approvals";
-import { editPlanAction, fetchPlan, orchestratorKeys, retryPlanAction } from "@/lib/api/orchestrator";
+import { editPlanAction, fetchPlan, orchestratorKeys, retryPlanAction, skipPlanAction } from "@/lib/api/orchestrator";
 import type { ActionStatus, ChatMessage, Module, PlanAction, PlanRead } from "@/lib/types/orchestrator";
 
 import { useRecordDecisions, type Decision } from "./decisions";
+import JobBoard, { confirmSkip, FixLine, fixable, skippable } from "./job-board";
 import WorkflowPreview from "./workflow-preview";
 
 const MODULE_LABEL: Record<Module, string> = {
@@ -62,6 +63,10 @@ function riskBadge(a: PlanAction): { label: string; className: string } {
 
 function statusBadge(status: ActionStatus): { label: string; className: string } {
   switch (status) {
+    case "draft":
+      return { label: "Draft", className: "badge badge-neutral" };
+    case "needs_input":
+      return { label: "Needs input", className: "badge badge-warn" };
     case "pending_approval":
       return { label: "Pending approval", className: "badge badge-warn" };
     case "approved":
@@ -121,10 +126,14 @@ function EditForm({ plan, action, onDone }: { plan: PlanRead; action: PlanAction
         else if (typeof original === "object" && original !== null) params[key] = JSON.parse(raw);
         else params[key] = raw;
       }
-      return editPlanAction(plan.id, action.index, params);
+      // SPEC-FE-067: a failed step is saved and run again in one go.
+      return action.status === "failed"
+        ? editPlanAction(plan.id, action.index, params).then(() => retryPlanAction(plan.id, action.index))
+        : editPlanAction(plan.id, action.index, params);
     },
     onSuccess: (next) => {
       queryClient.setQueryData(orchestratorKeys.plan(plan.id), next);
+      if (action.status === "failed") void queryClient.invalidateQueries({ queryKey: orchestratorKeys.messages });
       onDone();
     },
   });
@@ -154,7 +163,7 @@ function EditForm({ plan, action, onDone }: { plan: PlanRead; action: PlanAction
           Cancel
         </button>
         <button type="submit" className="btn btn-sm" disabled={save.isPending}>
-          {save.isPending ? "Saving…" : "Save step"}
+          {save.isPending ? "Saving…" : action.status === "failed" ? "Save & retry" : "Save step"}
         </button>
       </div>
     </form>
@@ -194,7 +203,8 @@ export default function PlanCard({ planId, initial }: { planId: string; initial?
     let tries = 0;
     let timer: ReturnType<typeof setTimeout>;
     const hasSummary = () =>
-      (queryClient.getQueryData<ChatMessage[]>(orchestratorKeys.messages) ?? []).some((m) => m.kind === "summary" && m.plan_id === planId);
+      queryClient.getQueriesData<ChatMessage[]>({ queryKey: orchestratorKeys.messages })
+        .some(([, list]) => (list ?? []).some((m) => m.kind === "summary" && m.plan_id === planId));
     const tick = () => {
       if (hasSummary() || tries++ >= 8) return;
       void queryClient.invalidateQueries({ queryKey: orchestratorKeys.messages });
@@ -238,6 +248,16 @@ export default function PlanCard({ planId, initial }: { planId: string; initial?
     },
     onError,
   });
+  // SPEC-FE-068: take one step out; its dependents are skipped too.
+  const skip = useMutation({
+    mutationFn: (index: number) => skipPlanAction(planId, index),
+    onMutate: () => setError(null),
+    onSuccess: (next) => {
+      queryClient.setQueryData(orchestratorKeys.plan(planId), next);
+      refresh();
+    },
+    onError,
+  });
 
   if (query.isPending) return <div className="cc-card cc-shimmer h-24 text-[13px] text-muted">Loading plan…</div>;
   if (query.isError) {
@@ -248,6 +268,8 @@ export default function PlanCard({ planId, initial }: { planId: string; initial?
     );
   }
   const plan = query.data;
+  // A job list from files or a big command (SPEC-FE-065) has its own board.
+  if (plan.job_list) return <JobBoard initial={plan} />;
   if (plan.legacy) {
     return (
       <div className="cc-card text-[13px] text-muted">
@@ -255,7 +277,7 @@ export default function PlanCard({ planId, initial }: { planId: string; initial?
       </div>
     );
   }
-  const busy = decide.isPending || approveAll.isPending || retry.isPending;
+  const busy = decide.isPending || approveAll.isPending || retry.isPending || skip.isPending;
   const pending = plan.actions.filter((a) => a.status === "pending_approval");
   const done = plan.actions.filter((a) => FINISHED.includes(a.status)).length;
   const live = plan.actions.some((a) => ACTIVE.includes(a.status));
@@ -320,6 +342,7 @@ export default function PlanCard({ planId, initial }: { planId: string; initial?
                   </div>
                 )}
                 {(a.status === "failed" || a.status === "skipped") && a.error && <div className="mt-1.5 text-xs text-danger">{a.error}</div>}
+                {a.status === "failed" && <div className="mt-1"><FixLine fix={a.fix} /></div>}
                 {(a.status === "pending_approval" && a.approval_id) || a.status === "failed" ? (
                   <div className="mt-2 flex flex-wrap justify-end gap-1.5">
                     {a.status === "pending_approval" && a.approval_id && (
@@ -335,9 +358,19 @@ export default function PlanCard({ planId, initial }: { planId: string; initial?
                         </button>
                       </>
                     )}
+                    {a.status === "failed" && fixable(a, false) && (
+                      <button type="button" className="btn btn-secondary btn-sm" disabled={busy} onClick={() => setEditing(editing === a.index ? null : a.index)}>
+                        Edit
+                      </button>
+                    )}
                     {a.status === "failed" && (
                       <button type="button" className="btn btn-secondary btn-sm" disabled={busy} onClick={() => retry.mutate(a.index)}>
                         Retry
+                      </button>
+                    )}
+                    {skippable(a) && (
+                      <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => { if (confirmSkip(a, plan.actions)) skip.mutate(a.index); }}>
+                        Skip
                       </button>
                     )}
                   </div>

@@ -19,7 +19,8 @@ export interface SocialAccount {
   last_published_at: string | null;
   notes: string[];
   /** SPEC-BE-080: connection details (null / empty when not connected). */
-  connected_via: "oauth" | "token" | null;
+  /** "socialapi" (SPEC-BE-104): no direct connection, the company's SocialAPI account posts instead. */
+  connected_via: "oauth" | "token" | "socialapi" | null;
   account_id: string | null;
   scopes: string[];
   token_status: TokenStatus | null;

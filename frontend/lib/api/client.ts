@@ -3,7 +3,7 @@
  * Every later spec calls apiFetch() (usually from a TanStack Query hook in
  * hooks/use-<domain>.ts); none should call fetch() directly.
  */
-import { getAuthToken, getRefreshToken, setAuthToken, setRefreshToken } from "../auth/token";
+import { currentUser, getAuthToken, getRefreshToken, setAuthToken, setRefreshToken } from "../auth/token";
 import { ApiError } from "../types/common";
 
 /**
@@ -49,23 +49,42 @@ let refreshInFlight: Promise<string | null> | null = null;
  * POST /api/v1/auth/refresh with the stored refresh token (plain fetch, so it can never
  * recurse into apiFetch). Stores the new pair and resolves with the new access token, or
  * null when there is no refresh token or the backend rejects it.
+ *
+ * Across tabs (SPEC-FE-070): every tab of the same user shares one stored pair, so the
+ * refresh runs under a Web Lock named after the user. A tab that waited finds a stored
+ * access token other than the one that just got the 401 (another tab already refreshed)
+ * and uses it instead of spending a refresh token that was already rotated. Without Web
+ * Locks (very old browsers) it refreshes directly; the backend's 30-second grace window
+ * then keeps a lost race from signing the user out everywhere.
  */
-function refreshAccessToken(root: string): Promise<string | null> {
+function refreshAccessToken(root: string, failedToken: string): Promise<string | null> {
   if (refreshInFlight) return refreshInFlight;
-  const refreshToken = getRefreshToken();
-  if (refreshToken === null) return Promise.resolve(null);
+  const user = currentUser();
+  if (user === null) return Promise.resolve(null);
+  const run = async (): Promise<string | null> => {
+    const stored = getAuthToken();
+    if (stored !== null && stored !== failedToken) return stored;
+    const refreshToken = getRefreshToken();
+    if (refreshToken === null) return null;
+    const res = await fetch(`${root}/api/v1/auth/refresh`, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    if (!res.ok) {
+      // Lost a race with a tab that has no Web Locks: its new pair may have landed meanwhile.
+      const after = getAuthToken();
+      return after !== null && after !== failedToken ? after : null;
+    }
+    const tokens = (await res.json()) as { access_token: string; refresh_token: string };
+    setAuthToken(tokens.access_token);
+    setRefreshToken(tokens.refresh_token);
+    return tokens.access_token;
+  };
   refreshInFlight = (async () => {
     try {
-      const res = await fetch(`${root}/api/v1/auth/refresh`, {
-        method: "POST",
-        headers: { Accept: "application/json", "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh_token: refreshToken }),
-      });
-      if (!res.ok) return null;
-      const tokens = (await res.json()) as { access_token: string; refresh_token: string };
-      setAuthToken(tokens.access_token);
-      setRefreshToken(tokens.refresh_token);
-      return tokens.access_token;
+      const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
+      return locks ? await locks.request(`ai-orchestrator.refresh.${user}`, run) : await run();
     } catch {
       return null;
     } finally {
@@ -133,7 +152,7 @@ export async function apiFetch<T>(path: string, init: ApiFetchInit = {}): Promis
   // once, then retry the original request once. If that fails, the original 401 is thrown and
   // the app-level 401 handler (app/(app)/providers.tsx) signs the user out, as before.
   if (response.status === 401 && token !== null && !path.startsWith("/api/v1/auth/")) {
-    const fresh = await refreshAccessToken(root);
+    const fresh = await refreshAccessToken(root, token);
     if (fresh !== null) {
       headers.set("Authorization", `Bearer ${fresh}`);
       response = await send();

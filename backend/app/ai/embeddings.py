@@ -7,7 +7,7 @@ Voyage AI, Mistral, Cohere, and any OpenAI-compatible server
 
 EMBEDDINGS_PROVIDER=auto (default) recognises the provider from the key
 ("AIza" Gemini, "pa-" Voyage, "sk-" OpenAI); with no EMBEDDINGS_API_KEY it
-tries LLM_API_KEY. Anthropic (Claude) and Groq have no embeddings API: their
+tries PilotSonic's Gemini / OpenAI key (SPEC-BE-101), then LLM_API_KEY. Anthropic (Claude) and Groq have no embeddings API: their
 keys switch embeddings off with a logged reason. Mistral and Cohere keys have
 no recognisable prefix, so they need an explicit provider.
 
@@ -104,6 +104,15 @@ def _usable(key: str) -> bool:
     return bool(key) and key != "changeme"
 
 
+def _platform_key() -> str:
+    try:
+        from app.services.ai_model_service import provider_key
+
+        return (provider_key(None, "", "gemini") or provider_key(None, "", "openai") or "").strip()
+    except Exception:  # noqa: BLE001 - embeddings stay off rather than break retrieval
+        return ""
+
+
 def config() -> Config | None:
     """The embedding setup, or None when embeddings are off (reason logged)."""
     s = get_settings()
@@ -112,6 +121,10 @@ def config() -> Config | None:
         return None
     key = s.EMBEDDINGS_API_KEY.get_secret_value().strip()
     from_llm = False
+    if not _usable(key) and provider == "auto":
+        # SPEC-BE-101: PilotSonic's own AI keys (the Super admin's): Gemini first
+        # (EMBEDDINGS_MIN_SIMILARITY was measured for it), then OpenAI.
+        key = _platform_key()
     if not _usable(key) and provider == "auto":
         key, from_llm = s.LLM_API_KEY.get_secret_value().strip(), True
     if not _usable(key):

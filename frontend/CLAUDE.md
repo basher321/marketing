@@ -48,8 +48,14 @@ missing or broken, stop and report it.
 - **TanStack Query hooks:** `hooks/use-<domain>.ts`.
 - **Auth tokens:** `lib/auth/token.ts` stores the access and refresh tokens in
   localStorage (SPEC-FE-004, SPEC-FE-024). `apiFetch` silently refreshes once on a
-  401 (one shared in-flight refresh) and retries. The route guard and the 401 → `/login` handler live in
-  `app/(app)/providers.tsx`; `/login` is `app/login/page.tsx`, outside the shell.
+  401 (one shared in-flight refresh) and retries. **One login per tab (SPEC-FE-070):**
+  - **Where tokens live:** pairs are stored per user (`ai-orchestrator.session.<sub>`), and sessionStorage
+    `ai-orchestrator.tab_user` pins the tab's user. A new tab starts as `ai-orchestrator.last_user`.
+  - **Signing in and out:** a sign-in switches only that tab, and a sign-out clears only that user.
+  - **Refresh:** it runs under a Web Lock per user, so same-user tabs refresh once.
+
+  The route guard and the 401 → `/login` handler live in `app/(app)/providers.tsx`;
+  `/login` is `app/login/page.tsx`, outside the shell.
 
 ## Per-spec file discipline
 
@@ -217,3 +223,30 @@ spec justifies it.
 - Responsive shell (SPEC-FE-063, 2026-10-10): from 1024 px the sidebar is the sticky 240 px column. Below it is a drawer
   opened by the top bar's ☰ (window event `shell:toggle-nav`, `TOGGLE_NAV_EVENT` in `sidebar.tsx`). It closes on ✕, the
   backdrop, Escape or a page change. Page padding is 16 px below 1024 px.
+- Files → job lists (SPEC-FE-064/065, 2026-10-10; **browser E2E with real AI: 21/22, the 22nd the deliberate .exe 422**):
+  - **Attachments** (`components/chat/attachments.tsx`): 📎, drag-and-drop over the chat and paste; chips with upload
+    progress → "Reading…" → the backend's summary. Send waits for uploads and posts `file_ids`; sent bubbles show file
+    cards. Uploads use XHR for progress (`uploadChatFile`).
+  - **Job board** (`components/chat/job-board.tsx`, forms in `job-editor.tsx`): `plan.job_list` plans render as the board
+    (from `plan-card.tsx`): item groups, filters, edit / remove / duplicate / add, item edit, the run settings (in order,
+    several at once, schedule), the submit sheet, then live progress with pause / resume / cancel / retry / approve. Run
+    times are shown and typed in the company timezone. Progress messages (`kind: "progress"`) are compact lines and
+    aren't spoken.
+- Chat history + Projects (SPEC-FE-066, 2026-10-10; **browser E2E with real AI passed twice**):
+  - **Layout:** the right column's top is `components/chat/chat-sidebar.tsx` (Chats | Projects); Pending Approvals folds
+    below it (`ApprovalsPanel collapsible`). Below 900 px the history is a drawer opened by "🕘 Chats" in the chat header.
+  - **URL state:** the open chat is `?c=<id>` and an open project `?p=<id>` (`app/(app)/chat/page.tsx`, inside
+    `<Suspense>`). Opening another chat or "+ New chat" remounts `ChatPanel` (a `key` bump); a chat created by sending
+    keeps it mounted.
+  - **Chats:** search (title or message text), groups (Pinned, Today, …), and a ⋯ menu with Rename / Pin / Move to project /
+    Archive / Delete. Deleting the open chat closes it at once and drops its cache, so nothing refetches it.
+  - **Cache keys:** messages are `orchestratorKeys.chatMessages(chatId)` under the `messages` prefix; `plan-card.tsx` reads
+    every chat's cache for live summaries.
+  - **Projects:** emoji, name, description, instructions, files (uploaded with `uploadChatFile`, then linked) and
+    "+ New chat in this project". A chat in a project shows its chip in the header.
+  - **Opening (SPEC-FE-067):** plain `/chat` opens the latest chat (the sidebar's list cache, pinned first); a new, empty
+    chat is `?new=1`.
+- Step outcomes (SPEC-FE-067, 2026-10-10; **browser E2E 9/9**): a failed step shows its error, `FixLine` ("How to fix:" +
+  the backend's link, from `job-board.tsx`) on the board, the plan card and the summary. `fixable()` steps (failed
+  read/draft, or queued read/draft in a submitted list) have Edit; for a failed one the form's button is "Save & retry"
+  (edit, then retry).

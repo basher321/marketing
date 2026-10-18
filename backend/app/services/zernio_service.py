@@ -66,7 +66,7 @@ def _call(fn: Any, *args: Any, **kwargs: Any) -> Any:
 
 def _require_configured() -> None:
     if not z.configured():
-        raise AppError("Zernio isn't set up on this server yet (the administrator adds ZERNIO_API_KEY).", 503)
+        raise AppError("Zernio isn't set up in PilotSonic yet (the Super admin adds the key).", 503)
 
 
 def _tenant(db: Session, tenant_id: str, lock: bool = False) -> Tenant:
@@ -133,7 +133,12 @@ def _iso(value: datetime | None) -> str | None:
 # Company profile
 # ---------------------------------------------------------------------------
 def profile_id(db: Session, tenant_id: str) -> str:
-    """This company's Zernio profile, created (once) on first use."""
+    """This company's Zernio profile, created (once) on first use. Every Zernio
+    call for a company passes here, so a company the Super admin switched off is
+    stopped here (SPEC-BE-103)."""
+    from app.services import platform_service
+
+    platform_service.require(tenant_id, "zernio", db)
     _require_configured()
     config = _config(_tenant(db, tenant_id))
     if config.get("profile_id"):
@@ -301,6 +306,9 @@ def connect(db: Session, tenant_id: str, actor: str, platform: str) -> dict[str,
 
 
 def callback(db: Session, tenant_id: str, actor: str, payload: s.CallbackRequest) -> dict[str, Any]:
+    from app.services import platform_service
+
+    platform_service.require(tenant_id, "zernio", db)  # SPEC-BE-103
     tenant = _tenant(db, tenant_id, lock=True)
     config = _config(tenant)
     pending = dict(config.get("pending") or {})

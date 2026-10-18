@@ -210,3 +210,12 @@ New section **Embeddings for AI reply retrieval** (one platform key for every co
 
 ## Amendment (SPEC-BE-088, 2026-10-09): local Ollama for AI Models
 - `OLLAMA_BASE_URL` (default `http://localhost:11434/v1`): Ollama's OpenAI-compatible API on this server. No key is needed.
+
+## Amendment (2026-10-10, SPEC-BE-101): Super admin keys
+
+- **AI keys:** the software's AI keys, the SocialAPI master key, the Zernio key and the Meta / TikTok / LinkedIn
+  sign-in apps are managed on the Super admin screen (`platform_settings`). The `.env` values (`ZERNIO_API_KEY`,
+  `META_*`, `TIKTOK_CLIENT_*`, `LINKEDIN_CLIENT_*`) remain as the fallback when the screen has no value. `LLM_PROVIDER`
+  / `LLM_API_KEY` are the last fallback after the software's AI chain.
+- **The production check** no longer refuses `LLM_PROVIDER=mock`, because the keys don't come from `.env` any more.
+  `LLM_PROVIDER=fixture` and `META_FAKE_TRANSPORT` are still refused.

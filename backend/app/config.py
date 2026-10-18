@@ -284,8 +284,8 @@ class Settings(BaseSettings):
         bad_origins = [o for o in self.CORS_ORIGINS if not o.startswith("https://") or "localhost" in o or "127.0.0.1" in o]
         if bad_origins:
             problems.append(f"CORS_ORIGINS must be https and not localhost (got {', '.join(bad_origins)})")
-        if self.LLM_PROVIDER in ("mock", "fixture"):
-            problems.append("LLM_PROVIDER can't be mock in production")
+        # SPEC-BE-101: the AI keys come from the Super admin screen (platform_settings),
+        # so the .env LLM_PROVIDER may stay "mock"; the dev-only fixture is refused above.
         if problems:
             raise ValueError("Unsafe production settings: " + "; ".join(problems) + ".")
         return self

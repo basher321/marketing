@@ -16,6 +16,13 @@ from urllib.parse import urlencode
 from app.config import get_settings
 from app.integrations.social_base import MediaItem, PostPayload, PublishResult, SocialError, call, expiry, oauth_token
 
+
+def _app(group: str, field: str) -> str:
+    """A software credential (SPEC-BE-101): the Super admin's screen first, then backend/.env."""
+    from app.services import platform_service
+
+    return platform_service.value(group, field)
+
 PLATFORM = "linkedin"
 BASE = "https://api.linkedin.com/rest"
 CAPTION_MAX = 3000
@@ -159,12 +166,12 @@ OAUTH_SCOPES = ("r_organization_admin", "w_organization_social", "r_organization
 
 
 def oauth_configured() -> bool:
-    s = get_settings()
-    return bool(s.LINKEDIN_CLIENT_ID and s.LINKEDIN_CLIENT_SECRET.get_secret_value())
+    get_settings()
+    return bool(_app("linkedin_app", "client_id") and _app("linkedin_app", "client_secret"))
 
 
 def login_url(redirect_uri: str, state: str) -> str:
-    query = {"response_type": "code", "client_id": get_settings().LINKEDIN_CLIENT_ID, "redirect_uri": redirect_uri,
+    query = {"response_type": "code", "client_id": _app("linkedin_app", "client_id"), "redirect_uri": redirect_uri,
              "state": state, "scope": " ".join(OAUTH_SCOPES)}
     return f"{AUTH_URL}?{urlencode(query)}"
 
@@ -178,17 +185,17 @@ def _token(body: dict[str, Any]) -> dict[str, Any]:
 
 
 def exchange_code(code: str, redirect_uri: str) -> dict[str, Any]:
-    s = get_settings()
+    get_settings()
     return _token(oauth_token(PLATFORM, TOKEN_URL, {
         "grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri,
-        "client_id": s.LINKEDIN_CLIENT_ID, "client_secret": s.LINKEDIN_CLIENT_SECRET.get_secret_value()}))
+        "client_id": _app("linkedin_app", "client_id"), "client_secret": _app("linkedin_app", "client_secret")}))
 
 
 def refresh(refresh_token: str) -> dict[str, Any]:
-    s = get_settings()
+    get_settings()
     return _token(oauth_token(PLATFORM, TOKEN_URL, {
         "grant_type": "refresh_token", "refresh_token": refresh_token,
-        "client_id": s.LINKEDIN_CLIENT_ID, "client_secret": s.LINKEDIN_CLIENT_SECRET.get_secret_value()}))
+        "client_id": _app("linkedin_app", "client_id"), "client_secret": _app("linkedin_app", "client_secret")}))
 
 
 def list_organizations(access_token: str) -> list[dict[str, Any]]:

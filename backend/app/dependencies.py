@@ -9,7 +9,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.services import auth_service
 
-__all__ = ["get_db", "get_current_user", "get_current_tenant", "require_permission"]
+__all__ = ["get_db", "get_current_user", "get_current_tenant", "require_permission", "require_super_admin"]
 
 
 def _extract_bearer_token(authorization: str | None) -> str:
@@ -69,3 +69,16 @@ def require_permission(minimum_role: str):
         return current_user
 
     return dependency
+
+
+def require_super_admin(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> User:
+    """PilotSonic's Super admin (SPEC-BE-101): a row in platform_admins, which no
+    route writes. Anyone else gets a plain 404, so the admin routes aren't revealed."""
+    from app.services import platform_service
+
+    if not platform_service.is_super_admin(db, str(current_user.id)):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
+    return current_user

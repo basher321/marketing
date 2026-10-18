@@ -7,28 +7,28 @@ import type { ReactNode } from "react";
 import PasswordInput from "@/components/auth/password-input";
 import { apiErrorText } from "@/components/integrations/connect-panel";
 import {
+  AI_BASE,
   deleteAIModelKey,
   fetchAIModels,
   fetchProviderModels,
   integrationKeys,
+  PLATFORM_AI_BASE,
   setAIModelOrder,
   testAIModel,
   updateAIModel,
 } from "@/lib/api/integrations";
+import { platformKeys } from "@/lib/api/platform";
 import type { AIModelList, AIModelProvider, AIModelTestResult, ModelOption } from "@/lib/types/integrations";
 import {
   aiCampaignKeys,
-  deleteMCPTool,
   fetchCreativeSettings,
   fetchVideoAudio,
   saveCreativeOrder,
-  saveMCPTool,
   saveVideoAudio,
-  testMCPTool,
 } from "@/lib/api/ai-campaigns";
 import { fetchMedia, mediaKeys, uploadMedia } from "@/lib/api/media";
 import { TTS_VOICES } from "@/lib/types/ai-campaigns";
-import type { CreativeKind, CreativeSettings, MCPTool, MCPToolTest, TTSVoice, VideoAudioSave, VideoAudioSettings } from "@/lib/types/ai-campaigns";
+import type { CreativeKind, CreativeSettings, TTSVoice, VideoAudioSave, VideoAudioSettings } from "@/lib/types/ai-campaigns";
 
 const FORBIDDEN = "Only managers and above can change integrations.";
 
@@ -105,11 +105,16 @@ function ModelCard({
   index,
   count,
   onMove,
+  base,
+  qk,
 }: {
   item: AIModelProvider;
   index: number;
   count: number;
   onMove: (from: number, to: number) => void;
+  /** SPEC-FE-068: PLATFORM_AI_BASE on the Super admin screen. */
+  base: string;
+  qk: readonly unknown[];
 }) {
   const queryClient = useQueryClient();
   const [key, setKey] = useState("");
@@ -117,13 +122,13 @@ function ModelCard({
   const [imageModel, setImageModel] = useState(item.image_model ?? "");
   const [videoModel, setVideoModel] = useState(item.video_model ?? "");
   const [test, setTest] = useState<AIModelTestResult | null>(null);
-  const listKey = [...integrationKeys.aiModels, item.provider, "models"];
+  const listKey = [...qk, item.provider, "models"];
   // A local provider (Ollama, SPEC-BE-088) takes no key: it counts as "has a key".
   const hasKey = Boolean(item.key_masked) || !item.needs_key;
   // The provider's live list, only once a key is saved (it's called with that key).
   const list = useQuery({
     queryKey: listKey,
-    queryFn: () => fetchProviderModels(item.provider),
+    queryFn: () => fetchProviderModels(item.provider, base),
     enabled: hasKey,
     staleTime: 10 * 60 * 1000,
   });
@@ -137,7 +142,7 @@ function ModelCard({
     if (item.has_images) setImageModel((m) => m || listData.suggested.image || "");
   }, [listData, item.has_images]);
   const done = (d: AIModelList) => {
-    queryClient.setQueryData(integrationKeys.aiModels, d);
+    queryClient.setQueryData(qk, d);
     setKey("");
     void queryClient.invalidateQueries({ queryKey: listKey });
   };
@@ -147,9 +152,9 @@ function ModelCard({
     ...(item.has_images ? { image_model: imageModel.trim() } : {}),
     ...(item.has_video ? { video_model: videoModel.trim() } : {}),
   });
-  const save = useMutation({ mutationFn: () => updateAIModel(item.provider, body(model)), onSuccess: done });
-  const toggle = useMutation({ mutationFn: () => updateAIModel(item.provider, { enabled: !item.enabled }), onSuccess: done });
-  const remove = useMutation({ mutationFn: () => deleteAIModelKey(item.provider), onSuccess: done });
+  const save = useMutation({ mutationFn: () => updateAIModel(item.provider, body(model), base), onSuccess: done });
+  const toggle = useMutation({ mutationFn: () => updateAIModel(item.provider, { enabled: !item.enabled }, base), onSuccess: done });
+  const remove = useMutation({ mutationFn: () => deleteAIModelKey(item.provider, base), onSuccess: done });
   // SPEC-FE-037 amendment: Test checks what's on screen. Unsaved key/model
   // changes are saved first ("Save & test"); a failed save skips the test.
   const dirty =
@@ -160,12 +165,12 @@ function ModelCard({
   const runTest = useMutation({
     // `chosen` comes from a "Switch to" button: save that model, then test it.
     mutationFn: async (chosen: string | undefined) => {
-      if (dirty || chosen) done(await updateAIModel(item.provider, body(chosen ?? model)));
-      return testAIModel(item.provider);
+      if (dirty || chosen) done(await updateAIModel(item.provider, body(chosen ?? model), base));
+      return testAIModel(item.provider, base);
     },
     onSuccess: (r) => {
       setTest(r);
-      void queryClient.invalidateQueries({ queryKey: integrationKeys.aiModels });
+      void queryClient.invalidateQueries({ queryKey: qk });
     },
   });
   const err = save.error ?? toggle.error ?? remove.error ?? runTest.error;
@@ -311,14 +316,18 @@ function ModelCard({
   );
 }
 
-// AI Models (SPEC-FE-037 / SPEC-BE-053): the company's own LLM keys, tried in
-// this order; if one fails the next answers automatically.
-export default function AIModels() {
+// AI Models (SPEC-FE-037 / SPEC-BE-053). SPEC-FE-068 / SPEC-BE-101: the keys are
+// PilotSonic's. `admin` = the Super admin's editor (keys, models, order, test);
+// otherwise the company's read-only view, plus its own creative order and the
+// slideshow sound settings.
+export default function AIModels({ admin = false }: { admin?: boolean }) {
   const queryClient = useQueryClient();
-  const models = useQuery({ queryKey: integrationKeys.aiModels, queryFn: fetchAIModels });
+  const base = admin ? PLATFORM_AI_BASE : AI_BASE;
+  const qk = admin ? platformKeys.aiModels : integrationKeys.aiModels;
+  const models = useQuery({ queryKey: qk, queryFn: () => fetchAIModels(base) });
   const reorder = useMutation({
-    mutationFn: (order: AIModelProvider["provider"][]) => setAIModelOrder(order),
-    onSuccess: (d) => queryClient.setQueryData(integrationKeys.aiModels, d),
+    mutationFn: (order: AIModelProvider["provider"][]) => setAIModelOrder(order, base),
+    onSuccess: (d) => queryClient.setQueryData(qk, d),
   });
   const move = (from: number, to: number) => {
     if (!models.data) return;
@@ -328,12 +337,53 @@ export default function AIModels() {
     reorder.mutate(order);
   };
 
+  if (!admin) {
+    const active = (models.data?.providers ?? []).filter((p) => p.enabled);
+    return (
+      <section className="mb-8" data-testid="ai-models-provided">
+        <h2 className="section-title">AI Models</h2>
+        <p className="m-0 mb-3 text-[13px] text-muted">
+          AI is provided by PilotSonic: there&apos;s no key to add. The models below are tried in this order; if one
+          fails, the next answers automatically.
+        </p>
+        {models.isPending ? (
+          <p className="text-[13px] text-muted">Loading AI models…</p>
+        ) : models.isError ? (
+          <p className="text-[13px] text-danger" role="alert">
+            Failed to load AI models: {models.error.message}
+          </p>
+        ) : active.length === 0 ? (
+          <p className="text-[13px] text-warn">PilotSonic&apos;s AI isn&apos;t set up yet. The Super admin adds the AI models.</p>
+        ) : (
+          <div className="integrations-grid">
+            {active.map((p, i) => (
+              <div key={p.provider} className="integration-card" data-provider={p.provider}>
+                <div className="integration-header">
+                  <div className="integration-name">
+                    <span className="mr-1.5 text-muted">#{i + 1}</span>
+                    {p.label}
+                  </div>
+                  <span className={`badge ${p.last_error ? "badge-warn" : "badge-success"}`}>{p.last_error ? "Unavailable now" : "Ready"}</span>
+                </div>
+                <p className="m-0 text-xs text-muted">Model: {p.model}</p>
+                {p.image_model && <p className="m-0 text-xs text-muted">Images: {p.image_model}</p>}
+                {p.video_model && <p className="m-0 text-xs text-muted">Video: {p.video_model}</p>}
+              </div>
+            ))}
+          </div>
+        )}
+        <CreativeSettingsSection />
+        <VideoAudioSection />
+      </section>
+    );
+  }
+
   return (
-    <section className="mb-8">
-      <h2 className="section-title">AI Models</h2>
+    <section className="mb-8" data-testid="ai-models-admin">
+      <h2 className="section-title">AI providers</h2>
       <p className="m-0 mb-3 text-[13px] text-muted">
-        Add one or more AI providers. They&apos;re tried in this order: if the first model fails (error, timeout or
-        quota), the next one answers automatically. Keys are stored encrypted and never shown again.
+        PilotSonic&apos;s own keys, used by every company. They&apos;re tried in this order: if the first model fails (error,
+        timeout or quota), the next one answers automatically. Keys are stored encrypted and never shown again.
       </p>
       {models.isPending ? (
         <p className="text-[13px] text-muted">Loading AI models…</p>
@@ -345,12 +395,12 @@ export default function AIModels() {
         <>
           <div className="integrations-grid">
             {models.data.providers.map((p, i) => (
-              <ModelCard key={p.provider} item={p} index={i} count={models.data.providers.length} onMove={move} />
+              <ModelCard key={p.provider} item={p} index={i} count={models.data.providers.length} onMove={move} base={base} qk={qk} />
             ))}
           </div>
           <p className="mb-0 mt-2 text-xs text-muted">
             {models.data.providers.some((p) => p.enabled)
-              ? "AI features use the active models above, in order."
+              ? "Every company's AI features use the active models above, in order."
               : models.data.env_fallback.configured
                 ? `No model is active here, so the server default (${models.data.env_fallback.provider}) is used.`
                 : "No AI model is active yet — AI features (creative generation, reply drafts, command chat) need at least one."}
@@ -362,8 +412,6 @@ export default function AIModels() {
           )}
         </>
       )}
-      <CreativeSettingsSection />
-      <VideoAudioSection />
     </section>
   );
 }
@@ -402,114 +450,17 @@ function OrderRow({ kind, data, onSave, saving }: { kind: CreativeKind; data: Cr
   );
 }
 
-function MCPForm({ tool, onSaved, onCancel }: { tool: MCPTool | null; onSaved: (d: CreativeSettings) => void; onCancel: () => void }) {
-  const [id, setId] = useState(tool?.id ?? "");
-  const [name, setName] = useState(tool?.name ?? "");
-  const [url, setUrl] = useState(tool?.url ?? "https://");
-  const [token, setToken] = useState("");
-  const [tools, setTools] = useState<Partial<Record<CreativeKind, string>>>(tool?.tools ?? {});
-  const [args, setArgs] = useState(JSON.stringify(tool?.arguments?.image ?? { prompt: "{prompt}", aspect_ratio: "{aspect_ratio}" }));
-  const [cost, setCost] = useState(String(tool?.cost_cents_per_call ?? 0));
-  const [argsError, setArgsError] = useState<string | null>(null);
-  const save = useMutation({
-    mutationFn: () => {
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(args) as Record<string, unknown>;
-      } catch {
-        setArgsError('Arguments must be JSON, e.g. {"prompt": "{prompt}"}.');
-        throw new Error("Arguments must be valid JSON.");
-      }
-      setArgsError(null);
-      const argumentMap = Object.fromEntries((Object.keys(tools) as CreativeKind[]).filter((k) => tools[k]).map((k) => [k, parsed]));
-      return saveMCPTool(id.trim(), {
-        name: name.trim(),
-        url: url.trim(),
-        ...(token.trim() ? { token: token.trim() } : {}),
-        enabled: true,
-        tools,
-        arguments: argumentMap,
-        cost_cents_per_call: Number(cost) || 0,
-      });
-    },
-    onSuccess: onSaved,
-  });
-  return (
-    <div className="card mb-3" data-testid="mcp-form">
-      <div className="grid gap-x-4 sm:grid-cols-2">
-        <div className="form-row">
-          <label htmlFor="mcp_id">Short ID (letters, numbers, - or _)</label>
-          <input id="mcp_id" value={id} disabled={Boolean(tool)} onChange={(e) => setId(e.target.value.toLowerCase())} placeholder="brand-images" />
-        </div>
-        <div className="form-row">
-          <label htmlFor="mcp_name">Name</label>
-          <input id="mcp_name" value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        <div className="form-row sm:col-span-2">
-          <label htmlFor="mcp_url">MCP server URL (Streamable HTTP, https)</label>
-          <input id="mcp_url" value={url} onChange={(e) => setUrl(e.target.value)} />
-        </div>
-        <div className="form-row">
-          <label htmlFor="mcp_token">
-            Bearer token {tool?.token_masked && <span className="font-normal text-muted">(saved {tool.token_masked})</span>}
-          </label>
-          <PasswordInput id="mcp_token" value={token} onChange={(e) => setToken(e.target.value)} placeholder={tool?.token_masked ? "Leave empty to keep the saved token" : "Optional"} />
-        </div>
-        <div className="form-row">
-          <label htmlFor="mcp_cost">Cost per call (US cents, for your AI limit)</label>
-          <input id="mcp_cost" type="number" min={0} value={cost} onChange={(e) => setCost(e.target.value)} />
-        </div>
-      </div>
-      <fieldset className="form-row">
-        <legend className="text-xs font-semibold">Tool name on the server, per task (leave empty if it doesn&apos;t do that task)</legend>
-        <div className="grid gap-x-4 sm:grid-cols-4">
-          {(Object.keys(KIND_LABEL) as CreativeKind[]).map((k) => (
-            <div key={k} className="form-row">
-              <label htmlFor={`mcp_tool_${k}`}>{KIND_LABEL[k]}</label>
-              <input id={`mcp_tool_${k}`} value={tools[k] ?? ""} onChange={(e) => setTools((cur) => ({ ...cur, [k]: e.target.value }))} />
-            </div>
-          ))}
-        </div>
-      </fieldset>
-      <div className="form-row">
-        <label htmlFor="mcp_args">Tool arguments (JSON; placeholders {"{prompt}"}, {"{aspect_ratio}"}, {"{system}"})</label>
-        <input id="mcp_args" value={args} onChange={(e) => setArgs(e.target.value)} />
-        {argsError && <span className="text-xs text-danger">{argsError}</span>}
-      </div>
-      {save.isError && !argsError && <p className="text-xs text-danger">{apiErrorText(save.error, FORBIDDEN)}</p>}
-      <div className="flex gap-2">
-        <button type="button" className="btn btn-sm" disabled={save.isPending || !id.trim() || !name.trim()} onClick={() => save.mutate()}>
-          {save.isPending ? "Saving…" : "Save"}
-        </button>
-        <button type="button" className="btn btn-secondary btn-sm" onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function CreativeSettingsSection() {
   const queryClient = useQueryClient();
   const settings = useQuery({ queryKey: aiCampaignKeys.creative, queryFn: fetchCreativeSettings });
-  const [editing, setEditing] = useState<MCPTool | "new" | null>(null);
-  const [tested, setTested] = useState<Record<string, MCPToolTest>>({});
   const store = (d: CreativeSettings) => queryClient.setQueryData(aiCampaignKeys.creative, d);
   const order = useMutation({ mutationFn: ({ kind, keys }: { kind: CreativeKind; keys: string[] }) => saveCreativeOrder({ [kind]: keys }), onSuccess: store });
-  const remove = useMutation({ mutationFn: (id: string) => deleteMCPTool(id), onSuccess: store });
-  const test = useMutation({
-    mutationFn: (id: string) => testMCPTool(id),
-    onSuccess: (r, id) => {
-      setTested((cur) => ({ ...cur, [id]: r }));
-      void queryClient.invalidateQueries({ queryKey: aiCampaignKeys.creative });
-    },
-  });
-  const failure = remove.error ?? test.error;
+  const failure = order.error;
   return (
     <div className="mt-6" data-testid="creative-settings">
       <h3 className="mb-1 mt-0 text-[15px]">Creative (AI campaigns)</h3>
       <p className="m-0 mb-2 text-[13px] text-muted">
-        Which source &quot;Create with AI&quot; tries first for each task; the next one is used if it fails. Images reuse your OpenAI and Gemini keys above.
+        Which source &quot;Create with AI&quot; tries first for each task; the next one is used if it fails. Images use PilotSonic&apos;s OpenAI and Gemini models.
       </p>
       {settings.isPending ? (
         <p className="text-[13px] text-muted">Loading…</p>
@@ -521,47 +472,6 @@ function CreativeSettingsSection() {
             <OrderRow key={k} kind={k} data={settings.data} saving={order.isPending} onSave={(keys) => order.mutate({ kind: k, keys })} />
           ))}
           {order.isError && <p className="text-xs text-danger">{apiErrorText(order.error, FORBIDDEN)}</p>}
-          <h4 className="mb-1 mt-4 text-[14px]">Creative tools (MCP)</h4>
-          <p className="m-0 mb-2 text-xs text-muted">
-            Plug in an MCP server that generates images or copy. It only creates content: publishing and spending always go through your own ad connections and approvals.
-          </p>
-          {settings.data.mcp_tools.map((t) => (
-            <div key={t.id} className="mb-2 flex flex-wrap items-center gap-2 text-[13px]" data-mcp={t.id}>
-              <b>{t.name}</b>
-              <span className="text-xs text-muted">{t.url}</span>
-              <span className="text-xs text-muted">
-                ({(Object.keys(t.tools) as CreativeKind[]).filter((k) => t.tools[k]).map((k) => KIND_LABEL[k]).join(", ")})
-              </span>
-              {tested[t.id] ? (
-                <span className={`text-xs ${tested[t.id].ok ? "text-success" : "text-danger"}`}>{tested[t.id].message}</span>
-              ) : t.last_error ? (
-                <span className="text-xs text-danger">{t.last_error}</span>
-              ) : null}
-              <button type="button" className="btn btn-secondary btn-sm" disabled={test.isPending} onClick={() => test.mutate(t.id)}>
-                Test
-              </button>
-              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditing(t)}>
-                Edit
-              </button>
-              <button type="button" className="btn btn-ghost btn-sm" disabled={remove.isPending} onClick={() => remove.mutate(t.id)}>
-                Delete
-              </button>
-            </div>
-          ))}
-          {editing ? (
-            <MCPForm
-              tool={editing === "new" ? null : editing}
-              onSaved={(d) => {
-                store(d);
-                setEditing(null);
-              }}
-              onCancel={() => setEditing(null)}
-            />
-          ) : (
-            <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditing("new")}>
-              + Add MCP creative tool
-            </button>
-          )}
           {failure && <p className="text-xs text-danger">{apiErrorText(failure, FORBIDDEN)}</p>}
         </>
       )}

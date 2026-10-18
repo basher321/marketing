@@ -4,10 +4,9 @@ import AIModels from "@/components/integrations/ai-models";
 import IntegrationsGrid from "@/components/integrations/integrations-grid";
 import { KeyCard } from "@/components/socialapi/publishing";
 
-// Title and subtitle copied from the reference mockup (SPEC-FE-002). One page
-// for every key (SPEC-FE-037): AI models with a fallback order (SPEC-BE-053),
-// the SocialAPI.ai key (SPEC-FE-054), then platform connections (SPEC-FE-021 /
-// SPEC-BE-052). Nothing goes in .env.
+// Title and subtitle copied from the reference mockup (SPEC-FE-002). SPEC-FE-068:
+// the API keys are PilotSonic's (the Super admin's); here a company sees the AI
+// models it gets, SocialAPI's status and connects its own pages and accounts.
 export default function IntegrationsPage() {
   return (
     <>
@@ -17,7 +16,7 @@ export default function IntegrationsPage() {
       <div id="socialapi" className="mt-4">
         <KeyCard />
         <p className="-mt-2 mb-4 text-xs text-muted">
-          After saving the key:{" "}
+          Next:{" "}
           <Link href="/marketing/organic/socialapi" className="text-accent underline">
             connect accounts and post
           </Link>{" "}

@@ -19,6 +19,7 @@ import { apiFetch } from "./client";
 export const tenantKeys = {
   me: ["tenant", "me"] as const,
   users: ["tenant", "users"] as const,
+  user: (id: string) => ["tenant", "users", id] as const,
   localeOptions: ["tenant", "locale-options"] as const,
 };
 
@@ -56,6 +57,11 @@ export function resetCompanyData(body: { confirm_slug: string; password: string 
 
 export function fetchUsers(): Promise<OrgUser[]> {
   return apiFetch<OrgUser[]>("/api/v1/users");
+}
+
+/** One user of the caller's company; any role may read it (used for the topbar account menu). */
+export function fetchUser(id: string): Promise<OrgUser> {
+  return apiFetch<OrgUser>(`/api/v1/users/${encodeURIComponent(id)}`);
 }
 
 export function createUser(body: OrgUserCreate): Promise<OrgUser> {

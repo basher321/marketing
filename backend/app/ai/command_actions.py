@@ -26,7 +26,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Annotated, Any, Literal, Type
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, ValidationInfo, field_validator, model_validator
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import AppError
@@ -216,6 +216,15 @@ class AICampaignParams(BaseModel):
     skus: Annotated[list[Sku], Field(max_length=10)] = []
     visuals: Literal["generate", "products", "builder"] = "generate"
 
+    @field_validator("visuals")
+    @classmethod
+    def products_need_skus(cls, v: str, info: ValidationInfo) -> str:
+        # SPEC-BE-100 FR2: the same rule AICampaignCreate applies at run time, checked
+        # before the step runs (skus is declared first, so it's in info.data).
+        if v == "products" and not info.data.get("skus"):
+            raise ValueError("Pick at least one product to use its images.")
+        return v
+
 
 class PublishMetaParams(BaseModel):
     model_config = _STRICT
@@ -293,6 +302,44 @@ class WorkflowIdParams(BaseModel):
     workflow_id: IdRef
 
 
+class ProductListingParams(BaseModel):
+    """AI product listing (SPEC-BE-098 FR2). Price, SKU and weight are the user's;
+    a missing price is asked (a job list marks it Needs input)."""
+
+    model_config = _STRICT
+    name: Text | None = None
+    details: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=8000)] | None = None
+    media_ids: Annotated[list[IdRef], Field(max_length=8)] = []
+    price: Annotated[Decimal, Field(gt=0, max_digits=12, decimal_places=2)]
+    compare_at_price: Annotated[Decimal, Field(gt=0, max_digits=12, decimal_places=2)] | None = None
+    currency: Annotated[str, StringConstraints(pattern=r"^[A-Za-z]{3}$")] | None = None
+    # The new product's SKU: it can't exist yet, so the guard checks it against the
+    # user's words and files (not the catalogue); generated when not given.
+    new_sku: Sku | None = None
+    brand: Text | None = None
+    category: Text | None = None
+    weight_grams: Annotated[int, Field(ge=1, le=1_000_000)] | None = None
+
+
+class PublishProductParams(BaseModel):
+    model_config = _STRICT
+    # "$n.product_id" from a create_product_listing step, a product id, or an existing SKU.
+    product: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+
+
+class AnalyzeProductParams(BaseModel):
+    model_config = _STRICT
+    media_ids: Annotated[list[IdRef], Field(min_length=1, max_length=4)]
+    details: LongText | None = None
+
+
+class JobListParams(BaseModel):
+    """A job list (SPEC-BE-097): its id from job_lists in the planner context."""
+
+    model_config = _STRICT
+    plan_id: IdRef
+
+
 class RunWorkflowParams(BaseModel):
     model_config = _STRICT
     workflow_id: IdRef
@@ -346,7 +393,7 @@ class CreateOrganicPostsParams(BaseModel):
     count: Annotated[int, Field(ge=1, le=30)]
     brief: LongText
     platforms: Annotated[list[OrganicPlatform], Field(min_length=1, max_length=4)]
-    product_skus: Annotated[list[Sku], Field(max_length=10)] = []
+    product_skus: Annotated[list[Sku], Field(max_length=10)] | IdRef = []
     media: Literal["none", "product_photos", "generate_photo", "generate_video"] = "none"
     tone: Text | None = None
     link_url: HttpsUrl | None = None
@@ -355,9 +402,15 @@ class CreateOrganicPostsParams(BaseModel):
 class GeneratePhotoParams(BaseModel):
     model_config = _STRICT
     prompt: LongText
-    product_skus: Annotated[list[Sku], Field(max_length=5)] = []
+    # SKUs, or "$n.skus" from a create_product_listing step (SPEC-BE-098 FR5).
+    product_skus: Annotated[list[Sku], Field(max_length=5)] | IdRef = []
     aspect_ratio: Ratio | None = None
     style: Text | None = None
+    # Creative requirements (SPEC-BE-098 FR4).
+    audience: Text | None = None
+    background: Text | None = None
+    mood: Text | None = None
+    text_overlay: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)] | None = None
     target_platform: OrganicPlatform | None = None
     reference_media_id: IdRef | None = None
 
@@ -365,7 +418,16 @@ class GeneratePhotoParams(BaseModel):
 class GenerateVideoParams(BaseModel):
     model_config = _STRICT
     prompt: LongText
-    product_skus: Annotated[list[Sku], Field(max_length=5)] = []
+    product_skus: Annotated[list[Sku], Field(max_length=5)] | IdRef = []
+    # Creative requirements (SPEC-BE-098 FR4): for this video only; the company's
+    # Sound for AI videos settings stay the default.
+    audience: Text | None = None
+    background: Text | None = None
+    mood: Text | None = None
+    text_overlay: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)] | None = None
+    music_media_id: IdRef | None = None
+    voiceover: bool | None = None
+    voiceover_text: LongText | None = None
     aspect_ratio: Literal["9:16", "16:9", "1:1"] | None = None
     duration_s: Annotated[int, Field(ge=2, le=60)] = 8
     style: Text | None = None
@@ -923,9 +985,15 @@ def _call_webhook(ctx: ExecContext, p: CallWebhookParams) -> dict[str, Any]:
 # --- Organic Marketing executors (SPEC-BE-078) ----------------------------------
 # They call organic_service / generation_service only, so approval rules,
 # platform validation, tenant scoping and audit rows are the same as in the UI.
-def _sku_ids(ctx: ExecContext, skus: list[str]) -> list[str]:
+def _sku_list(skus: list[str] | str) -> list[str]:
+    """product_skus may be a "$n.skus" reference until it is resolved (SPEC-BE-098)."""
+    return [skus] if isinstance(skus, str) else list(skus)
+
+
+def _sku_ids(ctx: ExecContext, skus: list[str] | str) -> list[str]:
     from app.services.organic_service import products
 
+    skus = _sku_list(skus)
     if not skus:
         return []
     rows = products(ctx.db, ctx.tenant_id, skus=skus)
@@ -990,16 +1058,15 @@ def _wait_for_job(ctx: ExecContext, job: dict[str, Any]) -> dict[str, Any]:
 # OpenAI images. Videos: Google Flow (= Veo 3.1 through the Gemini API; Flow
 # itself has no API), then an OpenAI slideshow (OpenAI shut down Sora on
 # 2026-09-24). The chain is pinned in the job request, so retries keep it;
-# the models are the company's own choices in AI Models.
+# the models are PilotSonic's choices (the Super admin's, SPEC-BE-101).
 CHAT_CHAINS = {"image": ["gemini_image", "openai_image"], "video": ["gemini_video", "openai_slideshow"]}
 CHAT_PROVIDER_NAMES = {"gemini_image": "Nano Banana", "openai_image": "OpenAI images",
                        "gemini_video": "Google Flow (Veo)", "openai_slideshow": "OpenAI images as a slideshow"}
 CHAT_NOT_READY = {
-    "image": "No image provider is set up: add a Google Gemini key with a Nano Banana image model "
-             "(e.g. gemini-2.5-flash-image), or an OpenAI key with an image model, in Integrations › AI Models.",
-    "video": "No video provider is set up: add a Google Gemini key with a Veo video model "
-             "(e.g. veo-3.1-generate-preview), or an OpenAI key with an image model (for a slideshow video), "
-             "in Integrations › AI Models.",
+    "image": "PilotSonic's image generation isn't set up yet: the Super admin adds a Google Gemini key with a "
+             "Nano Banana image model, or an OpenAI key with an image model.",
+    "video": "PilotSonic's video generation isn't set up yet: the Super admin adds a Google Gemini key with a Veo "
+             "video model, or an OpenAI key with an image model (for a slideshow video).",
 }
 
 
@@ -1062,7 +1129,7 @@ def _create_organic_posts(ctx: ExecContext, p: CreateOrganicPostsParams) -> dict
 
     product_ids = _sku_ids(ctx, p.product_skus)
     rows = organic_service.products(ctx.db, ctx.tenant_id, ids=product_ids)
-    media = organic_service.product_photo_media(ctx.db, ctx.tenant_id, ctx.actor_user_id, p.product_skus) if p.media == "product_photos" else []
+    media = organic_service.product_photo_media(ctx.db, ctx.tenant_id, ctx.actor_user_id, _sku_list(p.product_skus)) if p.media == "product_photos" else []
     posts, result = organic_service.ai_posts(ctx.db, ctx.tenant_id, p.brief, list(p.platforms), rows, p.tone, p.link_url, p.count)
     targets = [{"platform": pl} for pl in p.platforms]
     ids = []
@@ -1186,6 +1253,61 @@ def _reschedule_organic(ctx: ExecContext, p: RescheduleOrganicParams) -> dict[st
             "link": "/marketing/organic/calendar"}
 
 
+def _create_product_listing(ctx: ExecContext, p: ProductListingParams) -> dict[str, Any]:
+    from app.services import product_service
+
+    return product_service.create_ai_listing(ctx.db, ctx.tenant_id, ctx.actor_user_id, p)
+
+
+def _publish_product(ctx: ExecContext, p: PublishProductParams) -> dict[str, Any]:
+    from app.services import product_service
+
+    ref = p.product.strip()
+    is_id = bool(re.fullmatch(r"[0-9a-fA-F-]{36}", ref))
+    return product_service.publish_product(ctx.db, ctx.tenant_id, ctx.actor_user_id, ref if is_id else None, None if is_id else ref)
+
+
+def _analyze_product(ctx: ExecContext, p: AnalyzeProductParams) -> dict[str, Any]:
+    from app.ai.llm_client import LLMProviderError, llm_client
+    from app.services.product_service import _vision_images
+
+    try:
+        out = llm_client.complete_vision(
+            "You look at product photos for a shop. Describe only what you can see or read; never guess prices, stock, "
+            "sizes or claims. Respond with JSON only: {\"product_type\": \"\", \"brand\": \"\", \"colors\": [], "
+            "\"materials\": [], \"visible_text\": \"\", \"variants_hint\": \"\", \"notes\": \"\"}",
+            f"Merchant's notes: {p.details or '(none)'}", _vision_images(ctx.db, ctx.tenant_id, list(p.media_ids)),
+            max_tokens=800, db=ctx.db, tenant_id=ctx.tenant_id)
+        data = parse_llm_json(out.text)
+    except LLMProviderError as exc:
+        raise AppError(f"The photos couldn't be analysed ({str(exc)[:160]}).", 503) from None
+    rows = [{"field": k.replace("_", " "), "value": ", ".join(map(str, v)) if isinstance(v, list) else str(v)}
+            for k, v in data.items() if v not in (None, "", [])]
+    what = data.get("product_type") or "the product"
+    return {"summary": f"Looked at {len(p.media_ids)} photo(s): {what}.", "data": rows, "analysis": json.dumps(data)[:4000]}
+
+
+def _job_list_status(ctx: ExecContext, p: JobListParams) -> dict[str, Any]:
+    from app.services import job_board_service as jb
+
+    plan = jb._plan(ctx.db, ctx.tenant_id, p.plan_id, lock=False)
+    c = jb.counts(plan.actions or [])
+    total = len(plan.actions or [])
+    parts = ", ".join(f"{v} {k.replace('_', ' ')}" for k, v in sorted(c.items()))
+    return {"summary": f"{plan.title}: {plan.status.replace('_', ' ')}; {total} jobs ({parts}).",
+            "data": [{"status": k.replace("_", " "), "jobs": v} for k, v in sorted(c.items())]}
+
+
+def _job_list_op(op: str, done: str) -> Executor:
+    def run(ctx: ExecContext, p: JobListParams) -> dict[str, Any]:
+        from app.services import job_board_service as jb
+
+        detail = getattr(jb, op)(ctx.db, ctx.tenant_id, ctx.actor_user_id, p.plan_id)
+        return {"summary": f"{done}: {detail['title']}."}
+
+    return run
+
+
 REGISTRY: dict[str, CommandAction] = {}
 
 
@@ -1263,6 +1385,16 @@ for _a in (
     CommandAction("enable_workflow", "Turn workflow on", "workflows", "change", WorkflowIdParams, _set_workflow(True), "Enable a workflow (workflow_id or $n.workflow_id).", risk_fn=_enable_workflow_risk),
     CommandAction("disable_workflow", "Turn workflow off", "workflows", "change", WorkflowIdParams, _set_workflow(False), "Disable a workflow."),
     CommandAction("run_workflow", "Run workflow now", "workflows", "change", RunWorkflowParams, _run_workflow, "Run a workflow once with an input."),
+    # AI product listings and website publishing (SPEC-BE-098).
+    CommandAction("analyze_product", "Analyse product photos", "ecommerce", "read", AnalyzeProductParams, _analyze_product, "Describe what product photos show (type, brand, colours, printed text).", min_role="viewer"),
+    CommandAction("create_product_listing", "Create product listing", "ecommerce", "draft", ProductListingParams, _create_product_listing, "Write an AI product listing (title, description, features, specifications, tags, SEO) from photos and/or details; saved as a draft product. price is required and must come from the user."),
+    CommandAction("publish_product", "Publish product on website", "ecommerce", "change", PublishProductParams, _publish_product, "Publish a product: active on the website, and on the connected Shopify/WooCommerce store."),
+    # Job lists (SPEC-BE-097): asked about or controlled from the chat.
+    CommandAction("job_list_status", "Job list progress", "general", "read", JobListParams, _job_list_status, "How far a job list is (counts by status).", min_role="viewer"),
+    CommandAction("retry_failed_jobs", "Retry failed jobs", "general", "change", JobListParams, _job_list_op("retry_failed", "Retrying the failed jobs"), "Run a job list's failed jobs again."),
+    CommandAction("pause_job_list", "Pause job list", "general", "change", JobListParams, _job_list_op("pause", "Paused"), "Stop starting new jobs of a job list."),
+    CommandAction("resume_job_list", "Resume job list", "general", "change", JobListParams, _job_list_op("resume", "Resumed"), "Continue a paused job list."),
+    CommandAction("cancel_job_list", "Cancel job list", "general", "change", JobListParams, _job_list_op("cancel", "Cancelled"), "Skip all jobs of a job list that haven't run."),
     # General
     CommandAction("notify_owner", "Notify the owner", "general", "change", NotifyOwnerParams, _notify_owner, "In-app notification to the owner(s).", min_role="agent"),
     CommandAction("create_task", "Create a task", "general", "change", CreateTaskParams, _create_task, "Task notification for a role (e.g. draft a restock PO).", min_role="agent"),
@@ -1305,6 +1437,9 @@ FIELD_QUESTIONS: dict[str, str] = {
     "objective": "What's the goal: awareness, traffic, engagement, leads, app promotion or sales?",
     "name": "What should I call it?",
     "skus": "Which products (SKUs) does this cover?",
+    "price": "What's the selling price?",
+    "product": "Which product should I publish (its SKU)?",
+    "media_ids": "Which product photos should I use?",
     "threshold": "At what order amount should shipping become free?",
     "zone_id": "Which shipping zone?",
     "rate_id": "Which shipping method?",
@@ -1339,6 +1474,10 @@ FIELD_QUESTIONS: dict[str, str] = {
     "ad_account_id": "Which ad account should the ads run on?",
     "media_id": "Which image or video should the ad use? I can generate one: say what it should show.",
     "goal": "What's the goal: awareness, traffic, engagement, video views or sales?",
+    # AI Ad Autopilot visuals from products need products (SPEC-BE-100 FR2)
+    "visuals": "Which products should the ads show (SKUs)? Or say 'AI images' to generate the visuals.",
+    # SPEC-BE-102: no ad account the AI can build for
+    "ad_connection": "Connect your ad account through Zernio first (Paid Marketing › + New campaign › Zernio), then ask me again.",
 }
 GENERIC_FIELD_QUESTION = "What should “{field}” be for “{action}”?"
 
@@ -1554,6 +1693,77 @@ def resolve_refs(params: Any, outputs: dict[int, dict[str, Any]]) -> Any:
     if isinstance(params, list):
         return [resolve_refs(v, outputs) for v in params]
     return params
+
+
+def validation_text(exc: ValidationError) -> str:
+    """A step's invalid values as the user reads them (SPEC-BE-100 FR1):
+    "Visuals: Pick at least one product to use its images." per field."""
+    parts: list[str] = []
+    for err in exc.errors():
+        field_name = " ".join(str(p) for p in err.get("loc") or () if not isinstance(p, int)).replace("_", " ").strip()
+        msg = str(err.get("msg") or "is not valid").removeprefix("Value error, ").removeprefix("Assertion failed, ")
+        line = f"{field_name[:1].upper()}{field_name[1:]}: {msg}" if field_name else msg
+        if line not in parts:
+            parts.append(line if line.endswith(".") else f"{line}.")
+    return " ".join(parts)[:300] or "Some values are not valid."
+
+
+# How to fix a failed step (SPEC-BE-100 FR3): (pattern on the lowercased error,
+# fix text, page, link label). First match wins; "{edit}" is filled per step.
+_SOCIAL = r"(facebook page|instagram|tiktok|linkedin|social account|page)\b.*(isn't connected|not connected|reconnect|expired|connect it)"
+_FIX_RULES: list[tuple[str, str, str | None, str | None]] = [
+    (r"pick at least one product", "{edit}add product SKUs, or set Visuals to \"generate\" (AI images), then Retry.", None, None),
+    # SPEC-BE-102 FR2: an AI campaign without a direct connection: connect through Zernio instead.
+    (r"ai campaigns are built against the real ad account|connect your ad account through zernio",
+     "Connect your ad account through Zernio (Paid Marketing › Zernio), then ask the chat again; or Skip this job.",
+     "/marketing/paid/zernio/new", "Connect through Zernio"),
+    (_SOCIAL, "Connect the account in Marketing › Organic › Accounts, then press Retry.", "/marketing/organic/accounts", "Connect accounts"),
+    (r"(meta|zernio|shopify|woocommerce|store|ad account|ads account|google ads|pinterest|snapchat|\bx\b|integration)\b.*(isn't connected|not connected|reconnect|connect)",
+     "Connect it in Integrations, then press Retry.", "/integrations", "Open Integrations"),
+    # SPEC-BE-101: the AI keys are PilotSonic's, so a company can only retry or tell the Super admin.
+    (r"(ai model|api key|\bkey\b|no llm|llm provider|ai is unavailable|providers failed|all .*providers|isn't set up yet)",
+     "PilotSonic's AI isn't available right now: press Retry in a few minutes; if it keeps failing, tell the Super admin.", None, None),
+    (r"(429|rate limit|too many requests|quota)",
+     "The AI provider is busy or out of quota: wait a few minutes and press Retry.", None, None),
+    (r"(insufficient permissions|only the owner|your role|not allowed|permission)", "Ask the owner or a manager to run it.", None, None),
+    (r"(not found|doesn't exist|no longer exists|was deleted)",
+     "What it uses was deleted or renamed: {edit}pick another, then Retry.", None, None),
+    (r"(timed out|timeout|unavailable|503|502|500|didn't answer|connection)", "The service didn't answer: press Retry in a few minutes.", None, None),
+    (r"(must|isn't valid|is not valid|invalid|should be|at least|at most)", "{edit}correct this value, then Retry.", None, None),
+]
+
+
+def editable_after_approval(action: dict[str, Any], job_list: bool) -> bool:
+    """SPEC-BE-100 FR5: a failed read/draft step (any plan), or a queued one in a
+    submitted job list, can be edited; change/spend steps keep their approved values."""
+    if action.get("risk") not in ("read", "draft"):
+        return False
+    return action.get("status") == "failed" or (job_list and action.get("status") == "approved" and not action.get("started_at"))
+
+
+def fix_for(action: dict[str, Any], error: str | None, invalid: bool = False) -> dict[str, Any] | None:
+    """{text, href, link_label} for a failed step (SPEC-BE-100 FR3). `invalid`:
+    the step's own values failed validation, so the value rule applies unless the
+    products rule (the first one) matches."""
+    if not error:
+        return None
+    text = error.lower()
+    can_edit = action.get("risk") in ("read", "draft")
+    edit = "Edit the job: " if can_edit else ""
+    rules = _FIX_RULES
+    if invalid:
+        rules = [_FIX_RULES[0], _FIX_RULES[-1]]
+        text = text if re.search(_FIX_RULES[0][0], text) else f"{text} invalid"
+    for pattern, fix, href, label in rules:
+        if re.search(pattern, text):
+            if "{edit}" in fix and not can_edit:
+                return {"text": "The approved values can't run as they are: remove this job and ask for it again in the chat.",
+                        "href": None, "link_label": None}
+            out = fix.replace("{edit}", edit)
+            return {"text": out[:1].upper() + out[1:], "href": href, "link_label": label}
+    if can_edit:
+        return {"text": "Press Retry; if it fails again, edit the job or remove it.", "href": None, "link_label": None}
+    return {"text": "Press Retry; if it fails again, remove the job.", "href": None, "link_label": None}
 
 
 def execute(ctx: ExecContext, action_type: str, params: dict[str, Any]) -> dict[str, Any]:

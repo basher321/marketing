@@ -1,9 +1,13 @@
-"""/ai-models endpoints: per-company LLM keys and fallback order (SPEC-BE-053)."""
+"""/ai-models endpoints (SPEC-BE-053). SPEC-BE-101: the keys, models and order
+are PilotSonic's (the Super admin manages them under /platform/ai-models); a
+company reads them here, and the routes that managed keys answer 409. The
+company's own creative order and slideshow sound settings stay here."""
 from typing import Any
 
 from fastapi import APIRouter, Depends, Path, status
 from sqlalchemy.orm import Session
 
+from app.core.exceptions import ConflictError
 from app.db.session import get_db
 from app.dependencies import get_current_user, require_permission
 from app.models.user import User
@@ -41,7 +45,7 @@ def set_ai_model_order(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("manager")),
 ) -> dict[str, Any]:
-    return ai_model_service.set_order(db, str(current_user.tenant_id), str(current_user.id), list(payload.order))
+    raise ConflictError(ai_model_service.PROVIDED)  # SPEC-BE-101: keys are PilotSonic's
 
 
 # --- Sound for AI slideshow videos (SPEC-BE-094), before /{provider} ---
@@ -72,17 +76,17 @@ def put_mcp_tool(
     payload: MCPToolSave, tool_id: str = Path(pattern=MCP_ID), db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("manager")),
 ) -> dict[str, Any]:
-    return ai_model_service.save_mcp_tool(db, str(current_user.tenant_id), str(current_user.id), tool_id, payload)
+    raise ConflictError(ai_model_service.PROVIDED)  # SPEC-BE-101: keys are PilotSonic's
 
 
 @router.delete("/mcp/{tool_id}", response_model=CreativeSettings, status_code=status.HTTP_200_OK)
 def delete_mcp_tool(tool_id: str = Path(pattern=MCP_ID), db: Session = Depends(get_db), current_user: User = Depends(require_permission("manager"))) -> dict[str, Any]:
-    return ai_model_service.delete_mcp_tool(db, str(current_user.tenant_id), str(current_user.id), tool_id)
+    raise ConflictError(ai_model_service.PROVIDED)  # SPEC-BE-101: keys are PilotSonic's
 
 
 @router.post("/mcp/{tool_id}/test", response_model=MCPToolTest, status_code=status.HTTP_200_OK)
 def test_mcp_tool(tool_id: str = Path(pattern=MCP_ID), db: Session = Depends(get_db), current_user: User = Depends(require_permission("manager"))) -> dict[str, Any]:
-    return ai_model_service.test_mcp_tool(db, str(current_user.tenant_id), str(current_user.id), tool_id)
+    raise ConflictError(ai_model_service.PROVIDED)  # SPEC-BE-101: keys are PilotSonic's
 
 
 @router.put("/{provider}", response_model=AIModelList, status_code=status.HTTP_200_OK)
@@ -92,7 +96,7 @@ def update_ai_model(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("manager")),
 ) -> dict[str, Any]:
-    return ai_model_service.update_provider(db, str(current_user.tenant_id), str(current_user.id), provider, payload)
+    raise ConflictError(ai_model_service.PROVIDED)  # SPEC-BE-101: keys are PilotSonic's
 
 
 @router.get("/{provider}/models", response_model=ProviderModels, status_code=status.HTTP_200_OK)
@@ -101,7 +105,7 @@ def list_provider_models(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("manager")),
 ) -> dict[str, Any]:
-    return ai_model_service.list_models(db, str(current_user.tenant_id), provider)
+    raise ConflictError(ai_model_service.PROVIDED)  # SPEC-BE-101: keys are PilotSonic's
 
 
 @router.post("/{provider}/test", response_model=AIModelTestResult, status_code=status.HTTP_200_OK)
@@ -110,7 +114,7 @@ def test_ai_model(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("manager")),
 ) -> dict[str, Any]:
-    return ai_model_service.test_provider(db, str(current_user.tenant_id), str(current_user.id), provider)
+    raise ConflictError(ai_model_service.PROVIDED)  # SPEC-BE-101: keys are PilotSonic's
 
 
 @router.delete("/{provider}", response_model=AIModelList, status_code=status.HTTP_200_OK)
@@ -119,4 +123,4 @@ def delete_ai_model_key(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("manager")),
 ) -> dict[str, Any]:
-    return ai_model_service.delete_key(db, str(current_user.tenant_id), str(current_user.id), provider)
+    raise ConflictError(ai_model_service.PROVIDED)  # SPEC-BE-101: keys are PilotSonic's

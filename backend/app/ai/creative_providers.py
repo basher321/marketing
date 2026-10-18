@@ -75,6 +75,9 @@ class CreativeRequest:
     style: str | None = None
     negative_prompt: str | None = None
     reference_images: list[tuple[bytes, str]] = field(default_factory=list)
+    # SPEC-BE-098 FR4: this video's own sound (voiceover on/off, music_media_id,
+    # voiceover_text) over the company's Sound for AI videos settings.
+    audio: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -134,6 +137,26 @@ def image_size(data: bytes) -> tuple[str, int, int]:
     raise ValueError("not a PNG, JPEG or WebP image")
 
 
+def _crop_to_ratio(data: bytes, mime: str, w: int, h: int, want: float, ratio: str) -> tuple[bytes, int, int]:
+    import io
+
+    from PIL import Image
+
+    if w / h > want:
+        new_w, new_h = round(h * want), h
+    else:
+        new_w, new_h = w, round(w / want)
+    left, top = (w - new_w) // 2, (h - new_h) // 2
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            out = io.BytesIO()
+            fmt = {"image/jpeg": "JPEG", "image/webp": "WEBP"}.get(mime, "PNG")
+            img.crop((left, top, left + new_w, top + new_h)).save(out, format=fmt)
+    except Exception as exc:  # noqa: BLE001 - an unreadable image is a provider failure
+        raise ProviderFailed(f"image is {w}x{h} and couldn't be cropped to {ratio} ({type(exc).__name__})") from None
+    return out.getvalue(), new_w, new_h
+
+
 def checked_image(provider: str, model: str, data: bytes, ratio: str | None, cost: int) -> CreativeResult:
     if len(data) > MAX_IMAGE_BYTES:
         raise ProviderFailed("image larger than 30 MB")
@@ -144,7 +167,9 @@ def checked_image(provider: str, model: str, data: bytes, ratio: str | None, cos
     if ratio and h:
         want = ratio_value(ratio)
         if abs((w / h) - want) / want > RATIO_TOLERANCE:
-            raise ProviderFailed(f"image is {w}x{h}, too far from {ratio}")
+            # OpenAI images come only as 1:1, 2:3 or 3:2, so 4:5 or 9:16 arrive
+            # as the nearest size: centre-crop to the asked ratio, never fail.
+            data, w, h = _crop_to_ratio(data, mime, w, h, want, ratio)
     return CreativeResult(provider=provider, model=model, image=data, mime=mime, width=w, height=h, cost_cents=cost)
 
 
@@ -166,7 +191,7 @@ class LLMProvider:
         except LLMProviderError as exc:
             raise ProviderFailed(str(exc.detail if hasattr(exc, "detail") else exc)) from None
         if out.is_mock:
-            raise ProviderFailed("no AI model is set up (add one in Integrations › AI Models)")
+            raise ProviderFailed("PilotSonic's AI isn't set up yet (the Super admin adds it)")
         return CreativeResult(provider=f"llm:{out.provider}", model=out.model, text=out.text,
                               input_tokens=out.input_tokens, output_tokens=out.output_tokens)
 
@@ -626,6 +651,13 @@ class OpenAISlideshowProvider:
         from app.services.ai_model_service import video_audio
 
         cfg = video_audio(db, tenant_id)
+        if req.audio.get("voiceover") is not None:
+            cfg["voiceover"] = bool(req.audio["voiceover"])
+        if req.audio.get("voiceover_text"):
+            cfg["voiceover"] = True
+        if req.audio.get("music_media_id"):
+            cfg["music_media_id"] = str(req.audio["music_media_id"])
+            cfg["music"] = {"name": "the chosen track"}
         notes: list[str] = []
         voice: bytes | None = None
         music: bytes | None = None
@@ -658,6 +690,9 @@ class OpenAISlideshowProvider:
 
         brand = get_brand_voice(db, tenant_id)
         words = max(4, int(self.WORDS_PER_SECOND * (seconds - 1)))
+        if req.audio.get("voiceover_text"):  # the user's own words (SPEC-BE-098 FR4), trimmed to fit
+            script = " ".join(str(req.audio["voiceover_text"]).split()[: words + 3])
+            return self._speak(db, tenant_id, script, voice)
         system = ("You write voiceover scripts for short social media video ads. Reply with the spoken words only: "
                   "no quotes, labels, hashtags, emojis, stage directions or URLs.")
         user = (f"Video: {req.prompt[:1500]}\nBrand: {brand.brand_name or 'the brand'}\n"
@@ -671,6 +706,9 @@ class OpenAISlideshowProvider:
         script = " ".join(script.split()[: words + 3])
         if len(script) < 3:
             raise ProviderFailed("the AI returned an empty script")
+        return self._speak(db, tenant_id, script, voice)
+
+    def _speak(self, db: Session, tenant_id: str, script: str, voice: str) -> bytes:
         key = _saved_key(db, tenant_id, "openai")
         if not key:
             raise ProviderFailed("no OpenAI key saved (needed for the voice)")
@@ -861,6 +899,10 @@ def ordered(db: Session, tenant_id: str, kind: str) -> list[Any]:
 
 
 def generate(db: Session, tenant_id: str, req: CreativeRequest, providers: list[Any] | None = None) -> CreativeResult:
+    from app.services import platform_service
+
+    if not platform_service.allowed(tenant_id, "ai", db):  # SPEC-BE-103: also covers jobs already queued
+        raise AllProvidersFailed(req.kind, [("pilotsonic", platform_service.BLOCKED["ai"])])
     attempts: list[tuple[str, str]] = []
     for provider in providers if providers is not None else ordered(db, tenant_id, req.kind):
         if not provider.available(db, tenant_id):

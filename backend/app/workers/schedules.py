@@ -12,6 +12,7 @@ from app.workers.tasks import (
     generation_tasks,
     notification_tasks,
     optimization_tasks,
+    plan_tasks,
     publish_tasks,
     sync_tasks,
     workflow_tasks,
@@ -35,6 +36,8 @@ JOBS: list[dict[str, Any]] = [
     {"func": publish_tasks.publish_scheduled_post, "id": "publish_tasks", "trigger": "interval", "minutes": 1},
     # SPEC-BE-077: resume photo/video generations a restart left behind.
     {"func": generation_tasks.resume_generation_jobs, "id": "generation_tasks", "trigger": "interval", "minutes": 1},
+    # SPEC-BE-097: job lists - jobs whose time has come, checked every minute.
+    {"func": plan_tasks.run_due_jobs, "id": "plan_jobs", "trigger": "interval", "minutes": 1},
     # SPEC-BE-058: shipping re-sync from connected stores every 6 hours.
     {"func": sync_tasks.run_sync_tasks, "id": "sync_tasks", "trigger": "interval", "hours": 6},
     # SPEC-BE-080: social sign-in tokens (TikTok 24 h, LinkedIn 60 days) renewed ahead of expiry.

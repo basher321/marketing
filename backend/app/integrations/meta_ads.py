@@ -23,6 +23,13 @@ import structlog
 from app.config import get_settings
 from app.utils import locale_data
 
+
+def _app(group: str, field: str) -> str:
+    """A software credential (SPEC-BE-101): the Super admin's screen first, then backend/.env."""
+    from app.services import platform_service
+
+    return platform_service.value(group, field)
+
 logger = structlog.get_logger(__name__)
 
 # httpx logs every request URL at INFO ("HTTP Request: GET ...?access_token=...").
@@ -75,8 +82,8 @@ def graph_base() -> str:
 
 
 def app_configured() -> bool:
-    s = get_settings()
-    return bool(s.META_APP_ID and s.META_APP_SECRET.get_secret_value() and s.META_LOGIN_CONFIG_ID)
+    get_settings()
+    return bool(_app("meta_app", "app_id") and _app("meta_app", "app_secret") and _app("meta_app", "login_config_id"))
 
 
 def login_url(redirect_uri: str, state: str) -> str:
@@ -85,8 +92,8 @@ def login_url(redirect_uri: str, state: str) -> str:
     s = get_settings()
     query = urlencode(
         {
-            "client_id": s.META_APP_ID,
-            "config_id": s.META_LOGIN_CONFIG_ID,
+            "client_id": _app("meta_app", "app_id"),
+            "config_id": _app("meta_app", "login_config_id"),
             "redirect_uri": redirect_uri,
             "response_type": "code",
             "override_default_response_type": "true",
@@ -151,13 +158,13 @@ def _send(
 
 def exchange_code(code: str, redirect_uri: str) -> str:
     """Server-to-server code exchange -> business integration system user token."""
-    s = get_settings()
+    get_settings()
     body = _send(
         "GET",
         f"{graph_base()}/oauth/access_token",
         params={
-            "client_id": s.META_APP_ID,
-            "client_secret": s.META_APP_SECRET.get_secret_value(),
+            "client_id": _app("meta_app", "app_id"),
+            "client_secret": _app("meta_app", "app_secret"),
             "redirect_uri": redirect_uri,
             "code": code,
         },
@@ -183,7 +190,7 @@ class MetaClient:
 
     def _auth(self) -> dict[str, str]:
         auth = {"access_token": self._token}
-        secret = get_settings().META_APP_SECRET.get_secret_value()
+        secret = _app("meta_app", "app_secret")
         if secret:
             # appsecret_proof = HMAC-SHA256(access_token, app_secret).
             auth["appsecret_proof"] = hmac.new(

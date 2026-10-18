@@ -127,6 +127,17 @@ def create_brand(key: str, name: str) -> dict[str, Any]:
     return _data(call(key, "POST", "/brands", json={"name": name}))
 
 
+# Every scope a brand-restricted key may hold (webhooks:manage and analytics:read
+# can't be given to one; SPEC-BE-101, docs: guides/scoped-keys).
+RESTRICTED_SCOPES = ["accounts:read", "accounts:manage", "posts:read", "posts:write", "media:read", "media:write",
+                     "inbox:read", "inbox:write", "dms:read", "dms:send", "automations:read", "automations:write"]
+
+
+def create_key(key: str, name: str, brand_ids: list[str], scopes: list[str]) -> dict[str, Any]:
+    """POST /keys with a full-access key -> {id, raw_key, ...}; raw_key is shown once."""
+    return _data(call(key, "POST", "/keys", json={"name": name, "brand_ids": brand_ids, "scopes": scopes}))
+
+
 def _data(body: Any) -> dict[str, Any]:
     """{"data": {...}} or the object itself."""
     if isinstance(body, dict) and isinstance(body.get("data"), dict):

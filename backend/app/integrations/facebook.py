@@ -16,6 +16,13 @@ from app.config import get_settings
 from app.integrations.meta_ads import graph_base
 from app.integrations.social_base import MediaItem, PostPayload, PublishResult, SocialError, call
 
+
+def _app(group: str, field: str) -> str:
+    """A software credential (SPEC-BE-101): the Super admin's screen first, then backend/.env."""
+    from app.services import platform_service
+
+    return platform_service.value(group, field)
+
 PLATFORM = "facebook"
 CAPTION_MAX = 63206
 REQUIRED_PERMISSIONS = ("pages_manage_posts", "pages_read_engagement")
@@ -176,16 +183,16 @@ OAUTH_SCOPES = (
 
 
 def oauth_configured() -> bool:
-    s = get_settings()
-    return bool(s.META_APP_ID and s.META_APP_SECRET.get_secret_value())
+    get_settings()
+    return bool(_app("meta_app", "app_id") and _app("meta_app", "app_secret"))
 
 
 def login_url(redirect_uri: str, state: str) -> str:
     s = get_settings()
-    query: dict[str, str] = {"client_id": s.META_APP_ID, "redirect_uri": redirect_uri, "response_type": "code", "state": state}
-    if s.META_SOCIAL_LOGIN_CONFIG_ID:
+    query: dict[str, str] = {"client_id": _app("meta_app", "app_id"), "redirect_uri": redirect_uri, "response_type": "code", "state": state}
+    if _app("meta_app", "social_login_config_id"):
         # Facebook Login for Business: the configuration names the permissions.
-        query["config_id"] = s.META_SOCIAL_LOGIN_CONFIG_ID
+        query["config_id"] = _app("meta_app", "social_login_config_id")
     else:
         query["scope"] = ",".join(OAUTH_SCOPES)
     return f"https://www.facebook.com/{s.META_GRAPH_VERSION}/dialog/oauth?{urlencode(query)}"
@@ -194,8 +201,8 @@ def login_url(redirect_uri: str, state: str) -> str:
 def exchange_code(code: str, redirect_uri: str) -> dict[str, Any]:
     """code -> long-lived user token -> the Pages it manages (each with its own
     Page token and linked Instagram account) and the granted permissions."""
-    s = get_settings()
-    app = {"client_id": s.META_APP_ID, "client_secret": s.META_APP_SECRET.get_secret_value()}
+    get_settings()
+    app = {"client_id": _app("meta_app", "app_id"), "client_secret": _app("meta_app", "app_secret")}
     short_lived = call(PLATFORM, "GET", f"{graph_base()}/oauth/access_token",
                        params={**app, "redirect_uri": redirect_uri, "code": code}).json().get("access_token")
     if not short_lived:

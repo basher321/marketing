@@ -714,7 +714,10 @@ def _issues(db: Session, tenant_id: str, v: ContentAsset, content: OrganicConten
         errors.append(f"The text is {len(text_):,} characters; {rules.label} allows {rules.caption_max:,}.")
     if not (cur.get("caption") or "").strip() and not media:
         errors.append("The post is empty.")
-    if v.channel == "tiktok":
+    via_sapi = account.get("connected_via") == "socialapi"  # SPEC-BE-104
+    if via_sapi and v.channel == "instagram" and (md.get("post_format") or "post") == "story":
+        errors.append("Instagram stories can't be posted through SocialAPI yet; choose a feed post or reel.")
+    if v.channel == "tiktok" and not via_sapi:
         allowed = (account.get("extra") or {}).get("privacy_level_options") or []
         privacy = (md.get("platform_options") or {}).get("privacy_level")
         if not privacy:
@@ -774,10 +777,12 @@ def _ready(db: Session, tenant_id: str, actor: str, v: ContentAsset) -> OrganicC
         raise ConflictError("Approve this AI-generated content before scheduling it.")
     if v.status == "published":
         raise ConflictError("This version is already published.")
-    if v.channel == "tiktok":
+    account = social_account_service.account(db, tenant_id, v.channel)
+    if v.channel == "tiktok" and account.get("connected_via") != "socialapi":
         # TikTok's privacy options can change; read them fresh before checking.
         social_account_service.refresh_profile(db, tenant_id, v.channel)
-    errors, _ = _issues(db, tenant_id, v, content, social_account_service.account(db, tenant_id, v.channel))
+        account = social_account_service.account(db, tenant_id, v.channel)
+    errors, _ = _issues(db, tenant_id, v, content, account)
     if errors:
         raise AppError(f"{social_account_service.LABEL[v.channel]}: " + " ".join(errors), 422)
     _approve(db, tenant_id, actor, content)
@@ -1100,7 +1105,10 @@ def publish_one(db: Session, post: ScheduledPost) -> None:
             raise AppError("The post's content was deleted.", 409)
         content = _content(db, tenant_id, _meta(v)["organic_content_id"])
         conn = social_account_service.connection(db, tenant_id, post.channel)
-        result = adapter(post.channel).publish(conn["fields"], _payload(db, tenant_id, v, content))
+        md = dict(post.extra_metadata or {})
+        md["via"] = conn.get("via") or "direct"  # SPEC-BE-104: which path published it (results import)
+        post.extra_metadata = md
+        result = adapter(post.channel, conn.get("via")).publish(conn["fields"], _payload(db, tenant_id, v, content))
     except Exception as exc:  # noqa: BLE001 - classified below
         _handle_error(db, post, v, exc)
         return
@@ -1124,7 +1132,7 @@ def _poll_one(db: Session, post: ScheduledPost) -> None:
         return
     try:
         conn = social_account_service.connection(db, tenant_id, post.channel)
-        result = adapter(post.channel).poll(conn["fields"], dict(md.get("ref") or {}))
+        result = adapter(post.channel, md.get("via")).poll(conn["fields"], dict(md.get("ref") or {}))
     except SocialError as exc:
         if exc.transient:
             md["next_attempt_at"] = (_now() + timedelta(seconds=POLL_SECONDS * 2)).isoformat()

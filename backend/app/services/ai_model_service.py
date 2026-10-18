@@ -1,11 +1,14 @@
-"""Per-company LLM providers with a fallback order (SPEC-BE-053).
+"""The AI providers with a fallback order (SPEC-BE-053, SPEC-BE-088).
 
-Stored in tenants.settings["llm_providers"] = {provider: {key_enc, model,
-image_model, enabled, priority, last_error, last_ok_at}}. There is no default
-model (SPEC-BE-053 amendment 2026-10-02): a provider is used only once the
-company chose a model, picked from the provider's live list (list_models). Keys are Fernet-encrypted
-(utils/crypto) and never returned. The integration_provider DB enum has no
-LLM values, so the integrations table isn't used (no DDL needed).
+SPEC-BE-101: the keys are PilotSonic's, managed by the Super admin, and every
+company uses them ("Shared only"). They live in platform_settings["llm_providers"]
+= {provider: {key_enc, model, image_model, video_model, enabled, priority,
+last_error, last_ok_at}}: the shape each company used to keep in
+tenants.settings["llm_providers"], which is no longer read (kept, not deleted).
+There is no default model (SPEC-BE-053 amendment 2026-10-02): a provider is used
+only once a model was chosen from the provider's live list (list_models). Keys are
+Fernet-encrypted (utils/crypto) and never returned; companies don't even see them
+masked. The `tenant_id` arguments name the caller (for the audit), not the keys.
 """
 import time
 from datetime import datetime, timezone
@@ -22,6 +25,7 @@ from app.core.audit import write_audit_log
 from app.core.exceptions import AppError, NotFoundError
 from app.models.tenant import Tenant
 from app.schemas.ai_model import AIModelUpdate
+from app.services import platform_service
 from app.utils.crypto import decrypt_secret, encrypt_secret
 
 logger = structlog.get_logger(__name__)
@@ -29,6 +33,10 @@ logger = structlog.get_logger(__name__)
 VIDEO_PROVIDERS = ("openai", "gemini")
 TEST_TIMEOUT_S = 20.0
 LIST_TIMEOUT_S = 15.0
+STORE_KEY = "llm_providers"
+# SPEC-BE-101 FR3: what a company sees when it tries to manage keys.
+PROVIDED = "AI keys are provided by PilotSonic; the Super admin manages them."
+NOT_SET_UP = "PilotSonic's AI isn't set up yet (the Super admin adds the keys)."
 
 
 def _tenant(db: Session, tenant_id: str) -> Tenant:
@@ -38,15 +46,13 @@ def _tenant(db: Session, tenant_id: str) -> Tenant:
     return tenant
 
 
-def _config(tenant: Tenant) -> dict[str, dict[str, Any]]:
-    return {k: dict(v) for k, v in ((tenant.settings or {}).get("llm_providers") or {}).items()}
+def _config(db: Session | None) -> dict[str, dict[str, Any]]:
+    """The software's providers (SPEC-BE-101)."""
+    return {k: dict(v) for k, v in platform_service.get(STORE_KEY, db).items() if isinstance(v, dict)}
 
 
-def _save(tenant: Tenant, config: dict[str, dict[str, Any]]) -> None:
-    # Reassign a new dict so SQLAlchemy sees the jsonb change.
-    settings = dict(tenant.settings or {})
-    settings["llm_providers"] = config
-    tenant.settings = settings
+def _save(db: Session, config: dict[str, dict[str, Any]], actor_user_id: str) -> None:
+    platform_service.put(db, STORE_KEY, config, actor_user_id)
 
 
 def _spec(provider: str) -> llm_providers.ProviderSpec:
@@ -82,8 +88,9 @@ def _ts(raw: str | None) -> datetime | None:
     return datetime.fromisoformat(raw).astimezone(timezone.utc) if raw else None
 
 
-def list_providers(db: Session, tenant_id: str) -> dict[str, Any]:
-    config = _config(_tenant(db, tenant_id))
+def list_providers(db: Session, tenant_id: str | None = None, admin: bool = False) -> dict[str, Any]:
+    """The software's providers. Only the Super admin (admin=True) sees masked keys."""
+    config = _config(db)
     items: list[dict[str, Any]] = []
     for spec in llm_providers.PROVIDERS:
         entry = config.get(spec.provider, {})
@@ -99,7 +106,8 @@ def list_providers(db: Session, tenant_id: str) -> dict[str, Any]:
                 "video_model": entry.get("video_model") or None,
                 "has_video": spec.provider in VIDEO_PROVIDERS,
                 "priority": _priority(config, spec.provider),
-                "key_masked": ("••••" + key[-4:]) if key and len(key) >= 8 else ("••••" if key else None),
+                "has_key": key is not None or not spec.needs_key,
+                "key_masked": (platform_service.mask(key) if admin else None),
                 "last_error": entry.get("last_error"),
                 "last_ok_at": _ts(entry.get("last_ok_at")),
                 "docs_url": spec.docs_url,
@@ -115,15 +123,16 @@ def list_providers(db: Session, tenant_id: str) -> dict[str, Any]:
             "provider": settings.LLM_PROVIDER,
             "configured": settings.LLM_PROVIDER in ("anthropic", "openai") and bool(env_key) and env_key != "changeme",
         },
+        "managed_by": "platform",
     }
 
 
 def update_provider(
     db: Session, tenant_id: str, actor_user_id: str, provider: str, payload: AIModelUpdate
 ) -> dict[str, Any]:
+    """Super admin only (api/v1/platform.py); tenant_id is the Super admin's workspace."""
     spec = _spec(provider)
-    tenant = _tenant(db, tenant_id)
-    config = _config(tenant)
+    config = _config(db)
     entry = config.get(provider, {})
     entry.setdefault("priority", _priority(config, provider))
     sent = payload.model_fields_set
@@ -149,66 +158,63 @@ def update_provider(
     elif "enabled" not in entry and _usable_key(spec, entry) is not None and entry.get("model"):
         entry["enabled"] = True  # turns on the first time it has a key and a model
     config[provider] = entry
-    _save(tenant, config)
+    _save(db, config, actor_user_id)
     write_audit_log(
         db,
         tenant_id=tenant_id,
         actor_user_id=actor_user_id,
-        action="ai_model.update",
+        action="platform.ai_model.update",
         resource_type="tenant",
         resource_id=tenant_id,
         metadata={"provider": provider, "fields": sorted(f for f in sent if f != "api_key") + (["api_key"] if payload.api_key else [])},
     )
-    return list_providers(db, tenant_id)
+    return list_providers(db, tenant_id, admin=True)
 
 
 def set_order(db: Session, tenant_id: str, actor_user_id: str, order: list[str]) -> dict[str, Any]:
     if len(set(order)) != len(order):
         raise AppError("Each provider may appear once.", 422)
-    tenant = _tenant(db, tenant_id)
-    config = _config(tenant)
+    config = _config(db)
     rest = [p.provider for p in llm_providers.PROVIDERS if p.provider not in order]
     for index, provider in enumerate(list(order) + rest):
         config.setdefault(provider, {})["priority"] = index
-    _save(tenant, config)
+    _save(db, config, actor_user_id)
     write_audit_log(
         db,
         tenant_id=tenant_id,
         actor_user_id=actor_user_id,
-        action="ai_model.order",
+        action="platform.ai_model.order",
         resource_type="tenant",
         resource_id=tenant_id,
         metadata={"order": list(order) + rest},
     )
-    return list_providers(db, tenant_id)
+    return list_providers(db, tenant_id, admin=True)
 
 
 def delete_key(db: Session, tenant_id: str, actor_user_id: str, provider: str) -> dict[str, Any]:
     _spec(provider)
-    tenant = _tenant(db, tenant_id)
-    config = _config(tenant)
+    config = _config(db)
     entry = config.get(provider, {})
     entry.pop("key_enc", None)
     entry["enabled"] = False
     entry["last_error"] = None
     config[provider] = entry
-    _save(tenant, config)
+    _save(db, config, actor_user_id)
     write_audit_log(
         db,
         tenant_id=tenant_id,
         actor_user_id=actor_user_id,
-        action="ai_model.delete",
+        action="platform.ai_model.delete",
         resource_type="tenant",
         resource_id=tenant_id,
         metadata={"provider": provider},
     )
-    return list_providers(db, tenant_id)
+    return list_providers(db, tenant_id, admin=True)
 
 
 def test_provider(db: Session, tenant_id: str, actor_user_id: str, provider: str) -> dict[str, Any]:
     spec = _spec(provider)
-    tenant = _tenant(db, tenant_id)
-    config = _config(tenant)
+    config = _config(db)
     entry = config.get(provider, {})
     key = _usable_key(spec, entry)
     if key is None:
@@ -221,7 +227,8 @@ def test_provider(db: Session, tenant_id: str, actor_user_id: str, provider: str
     suggestions: list[str] = []
     suggested = None
     try:
-        llm_providers.call(provider, key, model, "You are a connection test.", "Reply with OK.", 5, TEST_TIMEOUT_S)
+        llm_providers.call(provider, key, model, "You are a connection test.", "Reply with OK.", 5, TEST_TIMEOUT_S,
+                           require_complete=False)  # 5 tokens: a cut-off answer still proves the key works
     except llm_providers.ProviderCallError as exc:
         error = str(exc)
         if error.startswith("HTTP 404"):
@@ -240,12 +247,12 @@ def test_provider(db: Session, tenant_id: str, actor_user_id: str, provider: str
     if error is None:
         entry["last_ok_at"] = now
     config[provider] = entry
-    _save(tenant, config)
+    _save(db, config, actor_user_id)
     write_audit_log(
         db,
         tenant_id=tenant_id,
         actor_user_id=actor_user_id,
-        action="ai_model.test",
+        action="platform.ai_model.test",
         resource_type="tenant",
         resource_id=tenant_id,
         metadata={"provider": provider, "ok": error is None},
@@ -257,7 +264,7 @@ def list_models(db: Session, tenant_id: str, provider: str) -> dict[str, Any]:
     """The provider's live model list for the saved key (a read: nothing is
     stored or audited). A provider error is returned in `error`."""
     spec = _spec(provider)
-    key = _usable_key(spec, _config(_tenant(db, tenant_id)).get(provider, {}))
+    key = _usable_key(spec, _config(db).get(provider, {}))
     if key is None:
         raise AppError("Save an API key first.", 409)
     try:
@@ -275,12 +282,13 @@ def list_models(db: Session, tenant_id: str, provider: str) -> dict[str, Any]:
     }
 
 
-def resolve_chain(db: Session, tenant_id: str) -> list[tuple[str, str, str]]:
-    """Enabled providers with a key, in fallback order: [(provider, key, model)]."""
-    tenant = db.get(Tenant, tenant_id)
-    if tenant is None:
+def resolve_chain(db: Session | None, tenant_id: str | None = None) -> list[tuple[str, str, str]]:
+    """The software's enabled providers with a key, in fallback order:
+    [(provider, key, model)]. The same for every company (SPEC-BE-101), and
+    empty for a company the Super admin switched AI off for (SPEC-BE-103)."""
+    if not platform_service.allowed(tenant_id, "ai", db):
         return []
-    config = _config(tenant)
+    config = _config(db)
     chain = []
     for spec in sorted(llm_providers.PROVIDERS, key=lambda s: _priority(config, s.provider)):
         entry = config.get(spec.provider, {})
@@ -290,49 +298,52 @@ def resolve_chain(db: Session, tenant_id: str) -> list[tuple[str, str, str]]:
     return chain
 
 
-def record_outcome(tenant_id: str, provider: str, error: str | None) -> None:
-    """Record a live call's result (last_error / last_ok_at) in its own short
-    transaction, so it never commits or disturbs the caller's session. A
-    failure here is logged and ignored: it must never break the AI call."""
+def record_outcome(tenant_id: str | None, provider: str, error: str | None) -> None:
+    """Record a live call's result (last_error / last_ok_at) on the software's
+    provider, in its own short transaction, so it never commits or disturbs the
+    caller's session. A failure here is logged and ignored: it must never break
+    the AI call."""
     from app.db.session import engine
 
-    path_err = "{llm_providers," + provider + ",last_error}"
-    path_ok = "{llm_providers," + provider + ",last_ok_at}"
+    path_err = "{" + provider + ",last_error}"
+    path_ok = "{" + provider + ",last_ok_at}"
     try:
         with engine.begin() as conn:
+            # Never wait behind the Super admin saving the same row: give up after 2 s.
+            conn.execute(text("SET LOCAL lock_timeout = '2s'"))
             if error is None:
                 conn.execute(
-                    text("UPDATE tenants SET settings = jsonb_set(jsonb_set(settings, CAST(:pe AS text[]), 'null'::jsonb), CAST(:po AS text[]), to_jsonb(CAST(:now AS text))) WHERE id = :t AND settings->'llm_providers' ? :p"),
-                    {"pe": path_err, "po": path_ok, "now": datetime.now(timezone.utc).isoformat(), "t": tenant_id, "p": provider},
+                    text("UPDATE platform_settings SET value = jsonb_set(jsonb_set(value, CAST(:pe AS text[]), 'null'::jsonb), CAST(:po AS text[]), to_jsonb(CAST(:now AS text))) WHERE key = :k AND value ? :p"),
+                    {"pe": path_err, "po": path_ok, "now": datetime.now(timezone.utc).isoformat(), "k": STORE_KEY, "p": provider},
                 )
             else:
                 conn.execute(
-                    text("UPDATE tenants SET settings = jsonb_set(settings, CAST(:pe AS text[]), to_jsonb(CAST(:e AS text))) WHERE id = :t AND settings->'llm_providers' ? :p"),
-                    {"pe": path_err, "e": error[:300], "t": tenant_id, "p": provider},
+                    text("UPDATE platform_settings SET value = jsonb_set(value, CAST(:pe AS text[]), to_jsonb(CAST(:e AS text))) WHERE key = :k AND value ? :p"),
+                    {"pe": path_err, "e": error[:300], "k": STORE_KEY, "p": provider},
                 )
     except Exception:  # noqa: BLE001 - bookkeeping only
-        logger.warning("llm_outcome_record_failed", tenant_id=tenant_id, provider=provider)
+        logger.warning("llm_outcome_record_failed", provider=provider)
 
 
-
-def provider_key(db: Session, tenant_id: str, provider: str) -> str | None:
-    """A saved key (decrypted) for the creative providers (SPEC-BE-070): image
-    generation reuses the OpenAI / Gemini keys from AI Models. Never returned."""
-    tenant = db.get(Tenant, tenant_id)
-    return _key(_config(tenant).get(provider, {})) if tenant else None
+def provider_key(db: Session | None, tenant_id: str, provider: str) -> str | None:
+    """The software's key (decrypted) for the creative and voice providers
+    (SPEC-BE-070, SPEC-BE-095): images, video and speech reuse the OpenAI /
+    Gemini / Groq keys. Never returned. None for a company whose AI is
+    switched off (SPEC-BE-103); "" (no company) is the platform's own use."""
+    if not platform_service.allowed(tenant_id or None, "ai", db):
+        return None
+    return _key(_config(db).get(provider, {}))
 
 
 def image_model(db: Session, tenant_id: str, provider: str) -> str | None:
-    """The image model the company chose for this provider (SPEC-BE-070
-    amendment 2026-10-02); None means image generation isn't set up."""
-    tenant = db.get(Tenant, tenant_id)
-    return (_config(tenant).get(provider, {}).get("image_model") or None) if tenant else None
+    """The image model chosen for this provider (SPEC-BE-070 amendment
+    2026-10-02); None means image generation isn't set up."""
+    return _config(db).get(provider, {}).get("image_model") or None
 
 
 def video_model(db: Session, tenant_id: str, provider: str) -> str | None:
-    """The video model the company chose (SPEC-BE-077); None = not set up."""
-    tenant = db.get(Tenant, tenant_id)
-    return (_config(tenant).get(provider, {}).get("video_model") or None) if tenant else None
+    """The video model chosen (SPEC-BE-077); None = not set up."""
+    return _config(db).get(provider, {}).get("video_model") or None
 
 
 # ---------------------------------------------------------------------------

@@ -229,10 +229,19 @@
     {
       "id": "ai_campaign_given",
       "what": "Create with AI from chat with the budget and landing page given.",
+      "direct_ad_platforms": ["meta"],
       "turns": [{"message": "Create an AI campaign on Meta for our mugs with a total budget of 3000, landing page https://shop.example.com/mugs",
         "model_output": {"new_request": true, "summary": "AI campaign", "ask": [], "actions": [
           {"type": "create_ai_campaign", "params": {"prompt": "Promote our ceramic mugs", "platforms": ["meta"], "budget": 3000, "budget_mode": "total", "landing_url": "https://shop.example.com/mugs"}, "description": "Start the AI campaign", "depends_on": []}]}}],
       "expect": {"kind": "plan", "actions": [{"type": "create_ai_campaign", "params": {"budget": "3000", "landing_url": "https://shop.example.com/mugs"}}]}
+    },
+    {
+      "id": "ai_campaign_not_connected",
+      "what": "Create with AI for a platform the company didn't connect directly: ask to connect through Zernio, no step (SPEC-BE-102).",
+      "turns": [{"message": "Create an AI campaign on Meta for our mugs with a total budget of 3000, landing page https://shop.example.com/mugs",
+        "model_output": {"new_request": true, "summary": "AI campaign", "ask": [], "actions": [
+          {"type": "create_ai_campaign", "params": {"prompt": "Promote our ceramic mugs", "platforms": ["meta"], "budget": 3000, "budget_mode": "total", "landing_url": "https://shop.example.com/mugs"}, "description": "Start the AI campaign", "depends_on": []}]}}],
+      "expect": {"kind": "clarification", "asks": ["ad connection"]}
     },
     {
       "id": "webhook_invented_url",

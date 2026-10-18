@@ -17,6 +17,13 @@ from urllib.parse import urlencode
 from app.config import get_settings
 from app.integrations.social_base import PostPayload, PublishResult, SocialError, call, expiry, from_response, oauth_token
 
+
+def _app(group: str, field: str) -> str:
+    """A software credential (SPEC-BE-101): the Super admin's screen first, then backend/.env."""
+    from app.services import platform_service
+
+    return platform_service.value(group, field)
+
 PLATFORM = "tiktok"
 BASE = "https://open.tiktokapis.com/v2"
 CAPTION_MAX = 2200
@@ -180,12 +187,12 @@ OAUTH_SCOPES = ("user.info.basic", "video.publish", "video.upload", "video.list"
 
 
 def oauth_configured() -> bool:
-    s = get_settings()
-    return bool(s.TIKTOK_CLIENT_KEY and s.TIKTOK_CLIENT_SECRET.get_secret_value())
+    get_settings()
+    return bool(_app("tiktok_app", "client_key") and _app("tiktok_app", "client_secret"))
 
 
 def login_url(redirect_uri: str, state: str) -> str:
-    query = {"client_key": get_settings().TIKTOK_CLIENT_KEY, "scope": ",".join(OAUTH_SCOPES), "response_type": "code",
+    query = {"client_key": _app("tiktok_app", "client_key"), "scope": ",".join(OAUTH_SCOPES), "response_type": "code",
              "redirect_uri": redirect_uri, "state": state}
     return f"{AUTH_URL}?{urlencode(query)}"
 
@@ -200,14 +207,14 @@ def _token(body: dict[str, Any]) -> dict[str, Any]:
 
 
 def exchange_code(code: str, redirect_uri: str) -> dict[str, Any]:
-    s = get_settings()
+    get_settings()
     return _token(oauth_token(PLATFORM, f"{BASE}/oauth/token/", {
-        "client_key": s.TIKTOK_CLIENT_KEY, "client_secret": s.TIKTOK_CLIENT_SECRET.get_secret_value(), "code": code,
+        "client_key": _app("tiktok_app", "client_key"), "client_secret": _app("tiktok_app", "client_secret"), "code": code,
         "grant_type": "authorization_code", "redirect_uri": redirect_uri}))
 
 
 def refresh(refresh_token: str) -> dict[str, Any]:
-    s = get_settings()
+    get_settings()
     return _token(oauth_token(PLATFORM, f"{BASE}/oauth/token/", {
-        "client_key": s.TIKTOK_CLIENT_KEY, "client_secret": s.TIKTOK_CLIENT_SECRET.get_secret_value(),
+        "client_key": _app("tiktok_app", "client_key"), "client_secret": _app("tiktok_app", "client_secret"),
         "grant_type": "refresh_token", "refresh_token": refresh_token}))

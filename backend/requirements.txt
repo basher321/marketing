@@ -55,6 +55,10 @@ babel==2.18.0
 
 # ---- Images (SPEC-BE-074): crop/pad media to each platform's ratio ----
 pillow==12.0.0
+# Command Chat file extraction (SPEC-BE-096): PDF, Word, Excel. Pure Python.
+pypdf==5.4.0
+python-docx==1.1.2
+openpyxl==3.1.5
 
 # ---- Video (SPEC-BE-093): a bundled ffmpeg binary (no system install) that
 # turns OpenAI images into a slideshow MP4 for Command Chat videos ----

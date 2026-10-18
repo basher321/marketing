@@ -47,6 +47,8 @@ FLOWS: dict[str, tuple[str, Any, str]] = {
 # Which flow connects each social platform (Instagram comes with its Page).
 PLATFORM_FLOW = {"facebook": "meta", "instagram": "meta", "tiktok": "tiktok", "linkedin": "linkedin"}
 REFRESHABLE = {"tiktok": tiktok, "linkedin": linkedin}
+# The Super admin's switch for each sign-in app (SPEC-BE-103).
+FLOW_ACCESS = {"meta": "meta_app", "tiktok": "tiktok_app", "linkedin": "linkedin_app"}
 STATE_TTL = timedelta(minutes=10)
 STATE_TYPE = "social_oauth"
 BAD_STATE = "This sign-in link expired or is invalid; start Connect again."
@@ -91,8 +93,15 @@ def _row(db: Session, tenant_id: str, actor_user_id: str, provider: str) -> Inte
     return record
 
 
+def _require_access(db: Session, tenant_id: str, flow: str) -> None:
+    from app.services import platform_service
+
+    platform_service.require(tenant_id, FLOW_ACCESS[flow], db)
+
+
 def connect_url(db: Session, tenant_id: str, actor_user_id: str, flow: str) -> dict[str, Any]:
     provider, module, _ = _require(flow)
+    _require_access(db, tenant_id, flow)
     record = _row(db, tenant_id, actor_user_id, provider)
     nonce = secrets.token_urlsafe(16)
     settings = dict(record.settings or {})
@@ -136,6 +145,7 @@ def _token_oauth(token: dict[str, Any], account_id: str | None) -> dict[str, Any
 
 def callback(db: Session, tenant_id: str, actor_user_id: str, flow: str, code: str, state: str) -> dict[str, Any]:
     provider, module, label = _require(flow)
+    _require_access(db, tenant_id, flow)
     record = integrations._primary(integrations._records(db, tenant_id, provider))
     _check_state(record, tenant_id, actor_user_id, flow, state)
     assert record is not None  # _check_state needs the row holding the nonce
@@ -247,8 +257,14 @@ def select(db: Session, tenant_id: str, actor_user_id: str, flow: str, account_i
 # ---------------------------------------------------------------------------
 # Refresh
 # ---------------------------------------------------------------------------
-def _needs_refresh(record: Integration | None, within: timedelta) -> bool:
+def _needs_refresh(record: Integration | None, within: timedelta, db: Session | None = None) -> bool:
     if record is None or record.status == "disconnected" or record.provider not in REFRESHABLE:
+        return False
+    from app.services import platform_service
+
+    # SPEC-BE-103: PilotSonic's app switched off for this company = no refresh;
+    # the token then runs out on its own.
+    if not platform_service.allowed(str(record.tenant_id), FLOW_ACCESS[record.provider], db):
         return False
     oauth = (record.settings or {}).get("oauth") or {}
     if oauth.get("via") != "oauth" or not oauth.get("has_refresh") or not oauth.get("access_expires_at"):
@@ -263,7 +279,7 @@ def _refresh_locked(own: Session, record_id: str, within: timedelta) -> str:
     """Refresh one integration under a row lock; 'refreshed' | 'skipped' |
     'retry' (network / platform outage) | 'expired' (grant rejected)."""
     record = own.query(Integration).filter(Integration.id == record_id).with_for_update().first()
-    refresh_token = integrations._secrets(record).get("refresh_token") if _needs_refresh(record, within) else None
+    refresh_token = integrations._secrets(record).get("refresh_token") if _needs_refresh(record, within, own) else None
     if record is None or not refresh_token:
         own.rollback()  # releases the row lock
         return "skipped"
@@ -288,7 +304,7 @@ def ensure_fresh(db: Session, tenant_id: str, platform: str, within: timedelta =
     """Before an adapter call: renew the access token when it expires within
     `within`. Committed in its own session on the same bind."""
     record = integrations._primary(integrations._records(db, tenant_id, platform))
-    if not _needs_refresh(record, within):
+    if not _needs_refresh(record, within, db):
         return "skipped"
     assert record is not None
     with Session(bind=db.get_bind(), join_transaction_mode="create_savepoint") as own:

@@ -21,6 +21,7 @@ from app.api.v1 import (
     media,
     organic,
     paid,
+    platform,
     social,
     socialapi,
     ads_builder,
@@ -77,4 +78,5 @@ api_router.include_router(workflows.router)
 api_router.include_router(approvals.router)
 api_router.include_router(integrations.router)
 api_router.include_router(ai_models.router)
+api_router.include_router(platform.router)  # SPEC-BE-101 Super admin
 api_router.include_router(webhooks.router)

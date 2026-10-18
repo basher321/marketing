@@ -38,6 +38,8 @@ class CatalogProvider(BaseModel):
     fields: list[CatalogField]
     test: bool
     docs_url: str
+    # SPEC-BE-101: no token form; connect with the sign-in button, Zernio or SocialAPI.
+    connect_only: bool = False
 
 
 class IntegrationSave(BaseModel):

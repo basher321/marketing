@@ -123,6 +123,22 @@ def _stamp(db: Session, tid: str) -> None:
 
 
 def _run_case(db: Session, case: dict[str, Any], seed: dict[str, str], stub: StubModel | None) -> list[str]:
+    """A case may say which ad platforms its company connected directly
+    ("direct_ad_platforms", SPEC-BE-102); the seeded company has none."""
+    from app.services import orchestrator_service as orch
+
+    direct = case.get("direct_ad_platforms")
+    if direct is None:
+        return _run_case_inner(db, case, seed, stub)
+    real = orch._direct_ad_platforms
+    orch._direct_ad_platforms = lambda _db, _tid: list(direct)  # type: ignore[assignment]
+    try:
+        return _run_case_inner(db, case, seed, stub)
+    finally:
+        orch._direct_ad_platforms = real  # type: ignore[assignment]
+
+
+def _run_case_inner(db: Session, case: dict[str, Any], seed: dict[str, str], stub: StubModel | None) -> list[str]:
     from app.models.orchestrator import OrchestratorMessage
     from app.services import orchestrator_service as orch
 

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { fetchPlatformMe, platformKeys } from "@/lib/api/platform";
 import { fetchTenant, tenantKeys } from "@/lib/api/tenant";
 
 // Sidebar (SPEC-FE-002). Sections, labels, routes and icon glyphs are copied
@@ -56,6 +57,12 @@ const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
   },
 ];
 
+// SPEC-FE-068: only PilotSonic's Super admin sees this section (GET /platform/me).
+const SUPER_ADMIN_SECTION: { title: string; items: NavItem[] } = {
+  title: "PilotSonic",
+  items: [{ label: "Super admin", href: "/admin", icon: "★" }],
+};
+
 // SPEC-FE-063: the top bar's ☰ button (a separate client component) opens the
 // drawer through this window event; no shared provider is needed.
 export const TOGGLE_NAV_EVENT = "shell:toggle-nav";
@@ -90,6 +97,8 @@ export default function Sidebar() {
   // mockup's "AI" mark. Shares the Settings page's cache key.
   const tenant = useQuery({ queryKey: tenantKeys.me, queryFn: fetchTenant, staleTime: 60_000 });
   const logo = tenant.data?.branding.logo_url ?? null;
+  const me = useQuery({ queryKey: platformKeys.me, queryFn: fetchPlatformMe, staleTime: 5 * 60_000 });
+  const sections = me.data?.super_admin ? [...NAV_SECTIONS, SUPER_ADMIN_SECTION] : NAV_SECTIONS;
   const [openGroups, setOpenGroups] = useState<string[]>([]);
   useEffect(() => setOpenGroups(readOpenGroups()), []);
   // Below 1024px the sidebar is a drawer (SPEC-FE-063): ☰ opens it; the
@@ -169,7 +178,7 @@ export default function Sidebar() {
           ✕
         </button>
       </div>
-      {NAV_SECTIONS.map((section) => (
+      {sections.map((section) => (
         <div key={section.title} className="contents">
           <div className="px-3 pb-[6px] pt-[14px] text-[11px] uppercase tracking-[.05em] text-slate-500">
             {section.title}

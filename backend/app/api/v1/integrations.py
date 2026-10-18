@@ -4,6 +4,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
+from app.core.exceptions import ConflictError
 from app.db.session import get_db
 from app.dependencies import get_current_user, require_permission
 from app.models.user import User
@@ -79,6 +80,8 @@ def save_integration(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("manager")),
 ) -> dict[str, Any]:
+    if provider in integration_service.CONNECT_ONLY:  # SPEC-BE-101 FR5
+        raise ConflictError(integration_service.CONNECT_ONLY_MESSAGE)
     return integration_service.save_credentials(
         db, str(current_user.tenant_id), str(current_user.id), provider, payload
     )

@@ -25,7 +25,7 @@ class SocialAccount(BaseModel):
     last_published_at: datetime | None
     notes: list[str]
     # SPEC-BE-080: connection details (null / empty when not connected).
-    connected_via: Literal["oauth", "token"] | None
+    connected_via: Literal["oauth", "token", "socialapi"] | None
     account_id: str | None
     scopes: list[str]
     token_status: Literal["valid", "expiring_soon", "expired", "no_expiry", "unknown"] | None

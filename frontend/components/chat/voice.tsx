@@ -36,7 +36,7 @@ export function canRecord(): boolean {
   return typeof window !== "undefined" && typeof MediaRecorder !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
 }
 
-export type RecorderState = "idle" | "recording" | "transcribing" | "error";
+export type RecorderState = "idle" | "starting" | "recording" | "transcribing" | "error";
 
 /**
  * Microphone -> transcript. `stop()` sends the recording to the backend and
@@ -50,11 +50,12 @@ export function useVoiceRecorder(onTranscript: (t: TranscriptRead) => void) {
   const [elapsed, setElapsed] = useState(0);
   const recorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
-  const chunks = useRef<Blob[]>([]);
   const audioCtx = useRef<AudioContext | null>(null);
   const frame = useRef<number | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const keep = useRef(true); // false = cancel: discard the recording
+  const busy = useRef(false); // a recording is starting or running
+  const cancelled = useRef(false); // Cancel pressed while waiting for the microphone
   const onText = useRef(onTranscript);
   onText.current = onTranscript;
 
@@ -92,31 +93,49 @@ export function useVoiceRecorder(onTranscript: (t: TranscriptRead) => void) {
   );
 
   const start = useCallback(async () => {
+    // One recording at a time. A second click while the browser asks for the
+    // microphone used to start a second recorder writing into the same buffer,
+    // so the saved file could begin mid-stream (no header) and be refused as
+    // "isn't a supported audio file", or be transcribed as gibberish.
+    if (busy.current) return;
+    busy.current = true;
+    cancelled.current = false;
     setError(null);
     if (!canRecord()) {
+      busy.current = false;
       setError("Voice commands need a browser with microphone recording (Chrome, Edge, Firefox or Safari).");
       setState("error");
       return;
     }
+    setState("starting");
     let media: MediaStream;
     try {
       media = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
     } catch {
+      busy.current = false;
       setError("Allow the microphone in your browser to use voice commands.");
       setState("error");
+      return;
+    }
+    if (!keep.current && cancelled.current) {
+      // Cancelled while the browser was asking for the microphone.
+      media.getTracks().forEach((t) => t.stop());
+      cancelled.current = false;
+      busy.current = false;
       return;
     }
     stream.current = media;
     const mime = pickMime();
     const rec = new MediaRecorder(media, { ...(mime ? { mimeType: mime } : {}), audioBitsPerSecond: 32_000 });
-    chunks.current = [];
+    const parts: Blob[] = []; // this recording's own data, never shared
     keep.current = true;
     rec.ondataavailable = (e) => {
-      if (e.data.size) chunks.current.push(e.data);
+      if (e.data.size) parts.push(e.data);
     };
     rec.onstop = () => {
-      const blob = new Blob(chunks.current, { type: rec.mimeType || mime || "audio/webm" });
+      const blob = new Blob(parts, { type: rec.mimeType || mime || "audio/webm" });
       cleanup();
+      busy.current = false;
       if (!keep.current) {
         setState("idle");
         return;
@@ -170,7 +189,10 @@ export function useVoiceRecorder(onTranscript: (t: TranscriptRead) => void) {
   const cancel = useCallback(() => {
     keep.current = false;
     if (recorder.current?.state === "recording") recorder.current.stop();
-    else cleanup();
+    else {
+      cleanup();
+      if (busy.current) cancelled.current = true; // still waiting for the microphone
+    }
     setError(null);
     setState("idle");
   }, [cleanup]);
@@ -236,6 +258,21 @@ export function VoiceBar({ rec }: { rec: ReturnType<typeof useVoiceRecorder> }) 
           <span />
         </span>
         <span className="flex-1 text-[12.5px] text-muted">Transcribing your voice…</span>
+      </div>
+    );
+  }
+  if (state === "starting") {
+    return (
+      <div className="cc-voicebar" aria-live="polite">
+        <span className="cc-dots" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </span>
+        <span className="flex-1 text-[12.5px] text-muted">Waiting for the microphone… allow it if your browser asks.</span>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={cancel}>
+          Cancel
+        </button>
       </div>
     );
   }

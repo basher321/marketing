@@ -56,3 +56,32 @@ in this document". SPEC-FE-047 G1's `Permissions-Policy: camera=(), microphone=(
 off for every page, so no browser could record. Changed to `microphone=(self)` in `next.config.mjs`: this site only,
 never a framed or other origin (`X-Frame-Options: DENY` stays). Camera and geolocation stay off.
 **Extra target file:** `frontend/next.config.mjs` (one header value). The dev server must be restarted to send it.
+
+## Amendment B (2026-10-10): "That recording isn't a supported audio file"
+
+Reported by the user. Cause, reproduced in Chrome: clicking the mic again while the browser was still asking for the
+microphone started a second recorder writing into the same shared buffer. The saved file could then begin mid-stream (no
+WebM header), so the backend refused it, or the two recordings were mixed and transcribed as gibberish ("Amamar marp po
+on", labelled Hindi, instead of "আমার পণ্যগুলো দেখাও").
+
+**Fix** (`components/chat/voice.tsx`):
+- Only one recording at a time; a second click while one is starting or running is ignored.
+- Each recording keeps its own buffer.
+- A "Waiting for the microphone… allow it if your browser asks." bar, with Cancel, shows while the browser asks.
+
+**Backend** (`ai/speech.py`): an unrecognised recording is logged with its first 16 bytes and the browser's stated
+type (never the audio), and the message now asks the user to record again.
+
+**Verified:** the double-click now gives the exact Bengali transcript; the voice E2E on the live app passes 18/18; and
+SPEC-BE-095's checks pass 27/27.
+
+## Amendment C (2026-10-10): replies in the spoken language, or the one asked for
+
+Backend: SPEC-BE-095 Amendment C.
+- **Hints:** `transcribeVoice` sends the browser's languages (`navigator.languages`, up to 6) as the `languages` form
+  field. It's a hint for the transcriber, never a rule.
+- **Reply language:** spoken replies, and the Listen button, use the language the user asked for (`reply_language`:
+  "reply in English", "ইংরেজিতে বলো", "हिंदी में बोलो"), else the language they spoke (`voice_language`). Mixed Bengali +
+  English is now Bengali, not Urdu.
+- **Verified:** `tsc` clean; the browser voice test on the live app passes 18/18 twice with the exact Bengali transcript.
+- **Target files:** `lib/api/orchestrator.ts`, `lib/types/orchestrator.ts`, `components/chat/chat-panel.tsx`.

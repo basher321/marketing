@@ -15,6 +15,7 @@ ROUTE_LIMITS: tuple[tuple[re.Pattern[str], int], ...] = (
     (re.compile(r"^/api/v1/ads/[a-z]+/media$"), 1024 * 1024 * 1024),  # ad videos (TikTok 500 MB, Meta 1 GB)
     (re.compile(r"^/api/v1/meta/media$"), 1024 * 1024 * 1024),
     (re.compile(r"^/api/v1/media$"), 1024 * 1024 * 1024),  # media library (SPEC-BE-074): videos up to 1 GB
+    (re.compile(r"^/api/v1/orchestrator/files$"), 101 * 1024 * 1024),  # chat attachments (SPEC-BE-096): 100 MB + form overhead
     (re.compile(r"^/api/v1/tenants/me/branding/"), 2 * 1024 * 1024),  # 1 MB image + form overhead
 )
 

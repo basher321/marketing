@@ -41,6 +41,8 @@ export interface CatalogProvider {
   fields: CatalogField[];
   test: boolean;
   docs_url: string;
+  /** SPEC-BE-101: no token form; connect with the sign-in button, Zernio or SocialAPI. */
+  connect_only?: boolean;
 }
 
 export interface IntegrationSave {
@@ -76,6 +78,8 @@ export interface AIModelProvider {
   has_video: boolean;
   /** 0 = tried first. */
   priority: number;
+  /** SPEC-BE-101: a key is set (PilotSonic's). key_masked only on the Super admin screen. */
+  has_key?: boolean;
   key_masked: string | null;
   last_error: string | null;
   last_ok_at: string | null;
@@ -87,6 +91,8 @@ export interface AIModelProvider {
 export interface AIModelList {
   providers: AIModelProvider[];
   env_fallback: { provider: string; configured: boolean };
+  /** SPEC-BE-101: "platform" = PilotSonic's keys, managed by the Super admin. */
+  managed_by?: "platform";
 }
 
 export interface AIModelUpdate {

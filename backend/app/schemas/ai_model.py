@@ -20,7 +20,9 @@ class AIModelProvider(BaseModel):
     video_model: str | None = None
     has_video: bool = False
     priority: int
-    # "••••" + last 4 characters, or null when no key is saved. Never the key.
+    # SPEC-BE-101: the keys are PilotSonic's. has_key = one is set; key_masked
+    # ("••••" + last 4) only for the Super admin, null for companies. Never the key.
+    has_key: bool = False
     key_masked: str | None
     last_error: str | None
     last_ok_at: datetime | None
@@ -37,6 +39,8 @@ class EnvFallback(BaseModel):
 class AIModelList(BaseModel):
     providers: list[AIModelProvider]
     env_fallback: EnvFallback
+    # "platform": managed by the Super admin (SPEC-BE-101).
+    managed_by: Literal["platform"] = "platform"
 
 
 class AIModelUpdate(BaseModel):

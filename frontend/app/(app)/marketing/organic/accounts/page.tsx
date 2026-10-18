@@ -7,12 +7,9 @@ import { OrganicHeader, StatusBadge, errorText } from "@/components/organic/shar
 import { connectFromMeta, fetchSocialAccounts, oauthConnect, socialKeys } from "@/lib/api/social";
 import { FLOW_LABEL, PLATFORM_FLOW, type SocialAccount, type SocialFlow, type TokenStatus } from "@/lib/types/social";
 
-const NEEDS: Record<string, string> = {
-  facebook: "A Page access token with pages_manage_posts and pages_read_engagement.",
-  instagram: "An Instagram professional account ID and a token with instagram_basic and instagram_content_publish.",
-  tiktok: "A Content Posting API token with video.publish (video.list for results).",
-  linkedin: "A token with w_organization_social and your company page's organization URN.",
-};
+// SPEC-BE-101: pasted tokens are refused; a page connects by sign-in or, since
+// SPEC-BE-104, through the company's SocialAPI account (Organic › SocialAPI).
+const SOCIALAPI_HREF = "/marketing/organic/socialapi";
 
 const TOKEN_LABEL: Record<TokenStatus, string> = {
   valid: "Valid",
@@ -29,8 +26,11 @@ function ConnectButton({ account }: { account: SocialAccount }) {
   const flow: SocialFlow = PLATFORM_FLOW[account.platform];
   // The browser goes to the platform's sign-in; the backend made the URL (with a signed, single-use state).
   const connect = useMutation({ mutationFn: () => oauthConnect(flow), onSuccess: (r) => window.location.assign(r.login_url) });
+  if (account.connected_via === "socialapi") return null;
   if (!account.oauth_available) {
-    return <p className="m-0 mb-1 text-xs text-muted">Sign-in isn&apos;t set up on this server; paste a token in Integrations.</p>;
+    return account.status === "not_connected" ? (
+      <p className="m-0 mb-1 text-xs text-muted">Connect it through SocialAPI (direct sign-in isn&apos;t set up in PilotSonic).</p>
+    ) : null;
   }
   const reconnect =
     account.status === "expired" || account.status === "error" || account.token_status === "expired" || account.token_status === "expiring_soon";
@@ -51,9 +51,11 @@ function Details({ a }: { a: SocialAccount }) {
   return (
     <dl className="m-0 mb-1 grid grid-cols-[auto_1fr] gap-x-3 text-xs">
       <dt className="text-muted">Connected via</dt>
-      <dd className="m-0">{a.connected_via === "oauth" ? "Sign-in" : "Pasted token"}</dd>
+      <dd className="m-0">{a.connected_via === "oauth" ? "Sign-in" : a.connected_via === "socialapi" ? "SocialAPI" : "Pasted token"}</dd>
       <dt className="text-muted">Account ID</dt>
       <dd className="m-0 break-all">{a.account_id ?? "—"}</dd>
+      {a.connected_via === "socialapi" ? null : (
+        <>
       <dt className="text-muted">Token</dt>
       <dd className={`m-0 ${a.token_status ? TOKEN_CLASS[a.token_status] ?? "" : ""}`}>
         {a.token_status ? TOKEN_LABEL[a.token_status] : "—"}
@@ -64,6 +66,8 @@ function Details({ a }: { a: SocialAccount }) {
       <dd className="m-0">{when(a.last_checked_at)}</dd>
       <dt className="text-muted">Results sync</dt>
       <dd className="m-0">{when(a.last_synced_at)}</dd>
+        </>
+      )}
       {a.scopes.length > 0 && (
         <>
           <dt className="text-muted">Permissions</dt>
@@ -135,7 +139,6 @@ export default function AccountsPage() {
             )}
             <Details a={a} />
             {a.last_published_at && <p className="m-0 mb-1 text-xs text-muted">Last post: {new Date(a.last_published_at).toLocaleString()}</p>}
-            {a.status === "not_connected" && <p className="m-0 mb-1 text-xs text-muted">Or paste: {NEEDS[a.platform]}</p>}
             {a.platform === "instagram" && a.status === "not_connected" && a.oauth_available && (
               <p className="m-0 mb-1 text-xs text-muted">Instagram connects through the Facebook Page it&apos;s linked to.</p>
             )}
@@ -145,9 +148,15 @@ export default function AccountsPage() {
               </p>
             ))}
             <ConnectButton account={a} />
-            <Link href="/integrations" className="btn btn-secondary btn-sm mt-1 inline-block no-underline">
-              {a.status === "not_connected" ? "Paste a token in Integrations" : "Manage / test in Integrations"}
-            </Link>
+            {a.status === "not_connected" || a.connected_via === "socialapi" ? (
+              <Link href={SOCIALAPI_HREF} className="btn btn-secondary btn-sm mt-1 inline-block no-underline">
+                {a.connected_via === "socialapi" ? "Manage in Organic › SocialAPI" : "Connect through SocialAPI"}
+              </Link>
+            ) : (
+              <Link href="/integrations" className="btn btn-secondary btn-sm mt-1 inline-block no-underline">
+                Manage / test in Integrations
+              </Link>
+            )}
           </div>
         ))}
       </div>

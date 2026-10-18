@@ -42,10 +42,10 @@ GEMINI_TTS_VOICE = "Kore"
 GEMINI_TTS_RATE = 24_000
 _GEMINI = "https://generativelanguage.googleapis.com/v1beta/models"
 
-NO_PROVIDER_LISTEN = "Voice commands need an OpenAI, Groq or Gemini key in Integrations › AI Models."
-NO_PROVIDER_SPEAK = "Voice replies need an OpenAI or Gemini key in Integrations › AI Models."
+NO_PROVIDER_LISTEN = "Voice commands aren't set up in PilotSonic yet: the Super admin adds an OpenAI, Groq or Gemini key."
+NO_PROVIDER_SPEAK = "Voice replies aren't set up in PilotSonic yet: the Super admin adds an OpenAI or Gemini key."
 NO_WORDS = "I couldn't hear any words. Try again closer to the microphone."
-BAD_AUDIO = "That recording isn't a supported audio file (WebM, Ogg, MP4/M4A, MP3 or WAV)."
+BAD_AUDIO = "That recording couldn't be read as audio (WebM, Ogg, MP4/M4A, MP3 or WAV). Please record again."
 
 
 class _Failed(Exception):
@@ -100,6 +100,12 @@ def language_name(code: str | None) -> str:
 
     item = locale_data.languages().get(code or "")
     return item["name"] if item else "the same language as the text"
+
+
+def _whose(db: Session, tenant_id: str) -> str:
+    """Nothing to add since SPEC-BE-101: the AI keys are PilotSonic's, the same
+    for every company (they were per company before, 2026-10-10)."""
+    return ""
 
 
 def _key(db: Session, tenant_id: str, provider: str) -> str | None:
@@ -183,7 +189,9 @@ _SCRIPTS: tuple[tuple[int, int, str], ...] = (
 
 
 def script_language(text: str) -> str | None:
-    """The language of a one-language script when most letters are in it."""
+    """The language of a one-language script when it is at least a fifth of the
+    letters (3+): "Hello, what's your name? তোমার নাম কী?" is Bengali, since
+    Latin is shared by many languages and people mix in English words."""
     letters = [ch for ch in text if ch.isalpha()]
     if not letters:
         return None
@@ -197,10 +205,174 @@ def script_language(text: str) -> str | None:
     if not counts:
         return None
     code, n = max(counts.items(), key=lambda kv: kv[1])
-    return code if n * 2 > len(letters) else None
+    return code if n >= 3 and n * 5 >= len(letters) else None
 
 
-def _listen_openai(key: str, audio: bytes, ext: str, mime: str) -> tuple[str, str | None]:
+# Scripts of languages written in a shared script: Whisper's guess must match
+# the transcript (it once said Urdu for a Bengali + English sentence).
+_SHARED_SCRIPTS: dict[str, tuple[tuple[int, int], ...]] = {
+    **dict.fromkeys(("ar", "ur", "fa", "ps", "sd", "ug"), ((0x0600, 0x06FF), (0x0750, 0x077F), (0xFB50, 0xFDFF), (0xFE70, 0xFEFF))),
+    **dict.fromkeys(("hi", "mr", "ne", "sa"), ((0x0900, 0x097F),)),
+    **dict.fromkeys(("ru", "uk", "bg", "sr", "mk", "be", "kk", "ky", "mn", "tg"), ((0x0400, 0x04FF),)),
+    **dict.fromkeys(("zh",), ((0x4E00, 0x9FFF), (0x3400, 0x4DBF))),
+}
+
+
+def _is_latin(ch: str) -> bool:
+    return ord(ch) < 0x0250
+
+
+def consistent(language: str | None, text: str) -> bool:
+    """Whether a detected language can be the transcript's: a language with its
+    own script needs letters of that script; romanized speech (all Latin
+    letters) keeps the guess."""
+    if not language:
+        return False
+    letters = [ch for ch in text if ch.isalpha()]
+    if not letters or all(_is_latin(ch) for ch in letters):
+        return True
+    ranges = _SHARED_SCRIPTS.get(language) or tuple((lo, hi) for lo, hi, code in _SCRIPTS if code == language)
+    if ranges:
+        return any(lo <= ord(ch) <= hi for ch in letters for lo, hi in ranges)
+    return any(_is_latin(ch) for ch in letters)  # a Latin-script language
+
+
+_EN_COMMON = frozenset(
+    "the a an is are was be to of in on at for and or with my me i you your our we it this that these those what "
+    "how when where who which show list create make send post posts add set update delete give tell please can "
+    "do does all any new low stock product products price order orders campaign campaigns ad ads today tomorrow "
+    "week day hello hi name from by about some many more less not no yes".split()
+)
+
+
+def _looks_english(text: str) -> bool:
+    import re
+
+    if any(ch.isalpha() and not _is_latin(ch) for ch in text):
+        return False
+    words = re.findall(r"[a-z']+", text.lower())
+    return len(words) >= 2 and sum(w in _EN_COMMON for w in words) * 10 >= len(words) * 3
+
+
+def pick_language(text: str, detected: str | None, hints: list[str]) -> str | None:
+    """The transcript's language: its script, else the detector's guess when it
+    fits the transcript, else the first hint that fits."""
+    by_script = script_language(text)
+    if by_script:
+        return by_script
+    guess = language_code(detected)
+    if guess and guess != "en" and _SHARED_SCRIPTS.get(guess) and _looks_english(text):
+        # All-Latin text that reads as English: Whisper's "urdu" for "Show products low on
+        # stock" is wrong. Romanized speech ("kya haal hai") has few English words and keeps the guess.
+        return "en"
+    if guess and guess not in hints and _SHARED_SCRIPTS.get(guess) and text and all(_is_latin(ch) for ch in text if ch.isalpha()):
+        # Romanized speech guessed as a language this company doesn't use: its own
+        # non-Latin language is likelier ("Amar product gulo dekhao" in Bangladesh is Bengali).
+        own = next((h for h in hints if h != "en" and (h in _SHARED_SCRIPTS or any(c == h for _, _, c in _SCRIPTS))), None)
+        if own:
+            return own
+    if guess and consistent(guess, text):
+        return guess
+    return next((h for h in hints if consistent(h, text)), None)
+
+
+def language_hints(db: Session, tenant_id: str, browser: list[str] | None = None) -> list[str]:
+    """Languages this company's people likely speak, best first: a saved brand
+    language, the main languages (official or 25%+) of its timezone's country,
+    the browser's, the main languages of its registered country, and English
+    last. Used to steer transcription, never to force it.
+
+    Order matters: the sign-up country is only a browser hint (pilotsonic1 was
+    registered as US but runs on Asia/Dhaka), and the brand helper's built-in
+    "en" default isn't a real setting, so only a saved brand row counts."""
+    import pytz  # type: ignore[import-untyped]  # no stubs installed
+    from babel import languages as babel_languages
+    from sqlalchemy import text as sql
+
+    from app.models.tenant import Tenant
+
+    out: list[str] = []
+
+    def add(code: object) -> None:
+        c = language_code(code)
+        if c and c not in out:
+            out.append(c)
+
+    def main_languages(country: str) -> None:
+        info = babel_languages.get_territory_language_info(country.upper())
+        for code, meta in sorted(info.items(), key=lambda kv: -float(kv[1].get("population_percent") or 0)):
+            # National languages only ("official_regional" Spanish in the US isn't one).
+            if meta.get("official_status") in ("official", "de_facto_official") or float(meta.get("population_percent") or 0) >= 25:
+                add(code)
+
+    try:
+        add(db.execute(sql("SELECT primary_language FROM brand_settings WHERE tenant_id = :t"), {"t": tenant_id}).scalar())
+    except Exception:  # noqa: BLE001 - hints are best effort
+        db.rollback()
+    tenant = db.get(Tenant, tenant_id)
+    if tenant is not None and tenant.timezone:
+        for country, zones in pytz.country_timezones.items():
+            if tenant.timezone in zones:
+                main_languages(country)
+    for b in browser or []:
+        add(b)
+    if tenant is not None and tenant.country_code:
+        main_languages(tenant.country_code)
+    add("en")
+    return out[:3]
+
+
+def _hint_prompt(hints: list[str]) -> str:
+    if not hints:
+        return ""
+    names = " or ".join(language_name(h) for h in hints)
+    return (f"The speaker may talk in {names}, and may mix them. Write every word in the script of the language it was "
+            "spoken in (Bengali in Bengali script, Hindi in Devanagari, Urdu in Arabic script, English in Latin letters).")
+
+
+# "Reply in English", "ইংরেজিতে বলো", "हिंदी में बोलो": the user asks for the
+# reply language. Names come from CLDR in English and in the speaker's language.
+_ALIASES = {"bengali": "bn", "bangla": "bn", "हिंदी": "hi", "बांग्ला": "bn", "बंगाली": "bn", "ইংলিশ": "en", "इंग्लिश": "en", "farsi": "fa", "mandarin": "zh", "chinese": "zh", "hindustani": "hi",
+            "filipino": "tl", "tagalog": "tl", "malay": "ms", "burmese": "my"}
+_CUE_EN = r"(?:reply|answer|respond|speak|talk|say|tell|explain|voice|response|replies)"
+
+
+def requested_language(text: str, spoken: str | None = None) -> str | None:
+    """The language the user explicitly asks to be answered in, else None."""
+    import re
+
+    from babel import Locale, UnknownLocaleError
+
+    low = text.lower()
+    names: dict[str, str] = dict(_ALIASES)
+    locales = ["en", *([spoken] if spoken else []), "bn", "hi", "ur", "ar"]
+    for loc in dict.fromkeys(locales):
+        try:
+            for code, name in Locale.parse(loc).languages.items():
+                if len(code) == 2 and name and len(name) >= 3:
+                    names.setdefault(name.lower(), code)
+        except (UnknownLocaleError, ValueError):
+            continue
+    alt = "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
+    patterns = [
+        rf"{_CUE_EN}\b[^.?!]{{0,40}}?\b(?:in|into)\s+({alt})\b",          # reply (to me) in English
+        rf"\b(?:in|into)\s+({alt})\s*(?:please|pls)?\s*[.!?]*\s*$",        # ... in English please
+        rf"({alt})(?:য়|য|তে|ে)?\s*(?:বলো|বলুন|বল|বলবে|বলবেন|উত্তর|জবাব|কথা|লিখ|শোনাও)",  # ইংরেজিতে বলো
+        rf"({alt})\s*(?:में|میں)",                                         # हिंदी में बोलो / اردو میں
+    ]
+    # "Write the posts in Spanish" is about the content's language, not the reply's:
+    # the trailing "... in <language>" form counts only when no content is being made.
+    content = re.search(r"\b(?:write|create|draft|generate|make|translate|caption|post|posts|description|listing|ad|ads|copy)\b", low)
+    for n, pattern in enumerate(patterns):
+        if n == 1 and content:
+            continue
+        m = re.search(pattern, low)
+        if m:
+            return names.get(m.group(1).strip())
+    return None
+
+
+def _listen_openai(key: str, audio: bytes, ext: str, mime: str, hints: list[str] | None = None) -> tuple[str, str | None]:
     """Text from gpt-4o-mini-transcribe (exact on Bengali where whisper-1 wrote
     Devanagari); the language from the script, else from whisper-1, asked at
     the same time. If the accurate model fails, whisper-1's own text is used."""
@@ -209,8 +381,11 @@ def _listen_openai(key: str, audio: bytes, ext: str, mime: str) -> tuple[str, st
     url = "https://api.openai.com/v1/audio/transcriptions"
 
     def accurate() -> str:
+        data = {"model": OPENAI_STT_MODEL, "response_format": "json"}
+        if hints:
+            data["prompt"] = _hint_prompt(hints)
         resp = _post(url, headers={"Authorization": f"Bearer {key}"}, files={"file": (f"voice.{ext}", audio, mime)},
-                     data={"model": OPENAI_STT_MODEL, "response_format": "json"}, timeout=60.0)
+                     data=data, timeout=60.0)
         try:
             return str(resp.json().get("text") or "")
         except ValueError:
@@ -232,27 +407,36 @@ def _listen_openai(key: str, audio: bytes, ext: str, mime: str) -> tuple[str, st
         if not whisper_text.strip():
             raise text_error
         text = whisper_text  # the accurate model failed; whisper-1 still heard it
-    return text, script_language(text) or whisper_lang
+    return text, pick_language(text, whisper_lang, hints or [])
 
 
-def transcribe(db: Session, tenant_id: str, audio: bytes) -> dict[str, Any]:
-    """{text, language, provider}; 422 bad/empty audio, 409 no key, 503 all failed."""
+def transcribe(db: Session, tenant_id: str, audio: bytes, declared_type: str | None = None,
+               browser_languages: list[str] | None = None) -> dict[str, Any]:
+    """{text, language, provider}; 422 bad/empty audio, 409 no key, 503 all failed,
+    403 AI switched off for this company (SPEC-BE-103)."""
+    from app.services import platform_service
+
+    platform_service.require(tenant_id, "ai", db)
     if not audio:
         raise AppError("The recording is empty.", 422)
     if len(audio) > MAX_AUDIO_BYTES:
         raise AppError("The recording is too long. Keep voice commands under 2 minutes.", 422)
     kind = audio_type(audio)
     if kind is None:
+        # Only the first bytes and the browser's stated type are logged, never the audio.
+        logger.warning("voice_audio_unrecognised", tenant_id=tenant_id, head=audio[:16].hex(), declared=declared_type,
+                       audio_bytes=len(audio))
         raise AppError(BAD_AUDIO, 422)
     ext, mime = kind
     chain = [(p, k) for p in LISTEN_ORDER if (k := _key(db, tenant_id, p))]
     if not chain:
-        raise AppError(NO_PROVIDER_LISTEN, 409)
+        raise AppError(NO_PROVIDER_LISTEN + _whose(db, tenant_id), 409)
+    hints = language_hints(db, tenant_id, browser_languages)
     failures: list[str] = []
     for provider, key in chain:
         try:
             if provider == "openai":
-                text, lang = _listen_openai(key, audio, ext, mime)
+                text, lang = _listen_openai(key, audio, ext, mime, hints)
             elif provider == "groq":
                 text, lang = _whisper("https://api.groq.com/openai/v1/audio/transcriptions", key, GROQ_STT_MODEL, audio, ext, mime)
             else:
@@ -264,7 +448,9 @@ def transcribe(db: Session, tenant_id: str, audio: bytes) -> dict[str, Any]:
         logger.info("voice_transcribed", tenant_id=tenant_id, provider=provider, language=lang, audio_bytes=len(audio))
         if not text:
             raise AppError(NO_WORDS, 422)
-        return {"text": text, "language": language_code(lang), "provider": provider}
+        language = pick_language(text, lang, hints)
+        logger.info("voice_language_picked", tenant_id=tenant_id, provider=provider, detected=lang, picked=language, hints=hints)
+        return {"text": text, "language": language, "provider": provider}
     logger.warning("voice_transcribe_failed", tenant_id=tenant_id, failures=failures)
     raise AppError("Voice couldn't be transcribed: " + "; ".join(failures), 503)
 
@@ -286,10 +472,13 @@ def _voice(db: Session, tenant_id: str) -> str:
 
 
 def speak(db: Session, tenant_id: str, text: str, language: str | None) -> dict[str, Any]:
-    """{audio: bytes, mime, provider}; 409 no key, 503 all failed."""
+    """{audio: bytes, mime, provider}; 409 no key, 503 all failed, 403 AI switched off (SPEC-BE-103)."""
+    from app.services import platform_service
+
+    platform_service.require(tenant_id, "ai", db)
     chain = [(p, k) for p in SPEAK_ORDER if (k := _key(db, tenant_id, p))]
     if not chain:
-        raise AppError(NO_PROVIDER_SPEAK, 409)
+        raise AppError(NO_PROVIDER_SPEAK + _whose(db, tenant_id), 409)
     name = language_name(language)
     failures: list[str] = []
     for provider, key in chain:

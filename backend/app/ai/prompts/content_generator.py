@@ -230,7 +230,7 @@ def generate_creative_variants(
             tenant_id=tenant_id,
         )
         if completion.is_mock:
-            raise LLMProviderError("No AI model is configured; cannot generate creative. Add one in Integrations › AI Models.")
+            raise LLMProviderError("PilotSonic's AI isn't set up yet; cannot generate creative. The Super admin adds the AI keys.")
         model = completion.model
         input_tokens += completion.input_tokens
         output_tokens += completion.output_tokens

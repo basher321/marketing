@@ -232,6 +232,107 @@ section before trusting any model.
     TTS (WAV). The stored reply text never changes.
   - **Errors:** no key → 409, all providers failed → 503. `dev_fakes` answers OpenAI/Groq/Gemini speech
     (`VOICE_TRANSCRIPT`).
+  - **Language (Amendment C):**
+    - **Choosing it:** the script decides when it's a fifth or more of the letters; Whisper's guess must fit the
+      transcript; English-looking Latin text is English. Hints (brand language, the timezone country's national
+      languages, the browser's, English) steer the transcriber's prompt.
+    - **Reply language:** "reply in X" / "Xতে বলো" / "X में बोलो" → `ChatMessage.reply_language`, which the chat speaks in
+      instead of the spoken language.
+- Files → job lists → automation (SPEC-BE-096/097/098 + SPEC-FE-064/065, 2026-10-10). Verified with dev fakes, real AI
+  (pilotsonic) and a browser E2E. DDL applied: `orchestrator_files`; `plan_status` += draft/submitted/paused/cancelled;
+  `orchestrator_plans` += mode, start_at, concurrency, submitted_at, paused_at, progress_at, items, template.
+  - **Files** (`services/file_extract_service.py`): `POST /orchestrator/files` (100 MB). PDF (pypdf; scanned pages read by
+    the vision model), DOCX, XLSX, CSV/TXT/JSON, images (→ media library) and ZIP (bomb, size, count, nesting and path
+    guards). Messages take `file_ids`.
+  - **Vision:** `providers.call(..., images=)` and `llm_client.complete_vision` (Claude/OpenAI/Gemini/OpenRouter, company
+    models only).
+  - **Job lists** (`services/job_board_service.py`): files, or a command of ≥ 5 steps, make a **draft** that runs nothing.
+    - **How it's built:** items + one AI-written template (`{{item.x}}`, `$n` per item) → expanded jobs, checked by the
+      schema and the guard (evidence includes the files). Invalid jobs are `needs_input`; hand-made jobs skip the guard.
+    - **Editing:** jobs, items, the schedule, or by chat (while a draft is open).
+    - **Submit:** applies the approval policy.
+    - **Running:** in order, parallel (1-5) or scheduled (`run_at`, company time); a 429 re-queues the job a minute later;
+      `workers/tasks/plan_tasks.py` checks every minute.
+    - **In the chat:** progress, failure and summary messages; chat actions `job_list_status`, `retry_failed_jobs`,
+      `pause|resume|cancel_job_list`.
+  - **Products** (`product_service.create_ai_listing` / `publish_product`, `integrations/store_products.py`,
+    `ai/prompts/product_listing.py`):
+    - `create_product_listing` writes a draft product from photos and/or details. The price is the user's only, the SKU
+      is `new_sku`, and any number the input doesn't have is removed.
+    - `publish_product` (change; takes `product` = `$n.product_id` / id / SKU) → the catalogue active + web channel, and
+      Shopify/WooCommerce when connected (all-or-nothing; re-publishing updates).
+  - **Creative:** `generate_photo` / `generate_video` take audience, background, mood and text_overlay; video also takes
+    music_media_id, voiceover and voiceover_text (this video only).
+  - **Dev fakes:** OpenAI/Groq/Gemini speech, Shopify/Woo products (`STORE_CALLS` / `STORE_FAIL`).
+- Command Chat history + Projects (SPEC-BE-099 + SPEC-FE-066, 2026-10-10). Verified on the live DB (38 rolled-back checks)
+  and by a browser E2E with real AI. DDL applied: `orchestrator_chats`, `orchestrator_projects`,
+  `orchestrator_files.project_id`; old messages were backfilled into one "Earlier chat" per user.
+  - **Chat id:** `orchestrator_messages.session_id` (a live column, unused before). Code is in `services/chat_service.py`.
+  - **Private:** chats and projects belong to their creator; anyone else's id is 404. Pending Approvals stays company-wide.
+  - **Sending:** `POST /orchestrator/messages` with `chat_id` continues that chat. Without it, the user's latest chat
+    continues (old clients, the eval), and `new_chat: true` or a `project_id` starts a new one. The pending
+    clarification and the open draft job list are per chat. Plan summaries and progress lines reach the plan's chat
+    through `chat_of_correlation`.
+  - **Titles:** the first words at once, then an AI title in the background (`title_source` auto → ai). A renamed or
+    backfilled chat is `manual` and is never retitled.
+  - **Projects:** instructions (≤ 4,000 chars) and up to 20 files (SPEC-BE-096 uploads) go into the planner context as
+    `project`, and the files' values count as evidence (SPEC-BE-085). One system-prompt line says the project is
+    background, not a request.
+  - **Reset** (`POST /tenants/me/reset`) deletes chats and projects.
+- Step outcomes and fixes (SPEC-BE-100 + SPEC-FE-067, 2026-10-10). Verified: 18 rolled-back checks, plus a browser E2E.
+  - **Readable errors:** a run-time `ValidationError` is recorded as its message (`ca.validation_text`), never
+    "Unexpected error (ValidationError)".
+  - **How to fix:** each failed step stores `fix {text, href, link_label}` from `ca.fix_for` (a rule table: social
+    account → `/marketing/organic/accounts`, ads/store/AI key → `/integrations`, rate limit, permissions, invalid
+    values…). It's in `PlanAction.fix`, the summary's `ResultItem.fix` and the failure chat line.
+  - **Chat lines:** a job list of up to 50 jobs (`EACH_JOB_LINES`) posts a line per finished job, with "(n of N)";
+    bigger lists keep the 5-minute progress line.
+  - **Editing after approval:** a failed read/draft step, or a queued read/draft job of a submitted list, can be edited
+    (then Retry). change/spend steps can't, because the approval covered their values.
+  - `create_ai_campaign` with `visuals: "products"` needs SKUs at check time (needs_input / a question).
+- **Super admin + software-wide keys (2026-10-10): SPEC-BE-101/102 + SPEC-FE-068.** Verified on the live DB with dev fakes
+  (rolled back); the FE browser E2E is still pending. DDL applied: `platform_admins`, `platform_settings`.
+  - **Super admin:** workspace `pilotsonic-admin`, superadmin@pilotsonic.com. A row in `platform_admins` (no route writes
+    it); `dependencies.require_super_admin` → 404 for everyone else. Routes `/platform/*` (`api/v1/platform.py`), screen
+    `/admin`; `GET /platform/me` → `{super_admin}`.
+  - **Key store:** `services/platform_service.py` over `platform_settings` (`llm_providers`, `socialapi`, `zernio`,
+    `meta_app`, `tiktok_app`, `linkedin_app`); secrets Fernet `*_enc`; unset values fall back to `.env`; 30 s cache
+    (`clear_cache()` on save). Without `db`, reads use their own connection, so rolled-back checks must patch `_read`.
+  - **AI is shared only:** every AI feature uses the software chain; companies' own keys are ignored (kept in the DB).
+    Company `/ai-models` key routes answer 409 (`ai_model_service.PROVIDED`). No model anywhere → the chat says
+    "PilotSonic's AI isn't set up yet".
+  - **SocialAPI:** one master key; each company gets its own brand + brand-restricted key on first use
+    (`tenants.settings.socialapi.managed`), so SocialAPI isolates companies. Company key save/delete are 409.
+    Since 2026-10-11 the config stores `master_fp` (a short SHA-256 of the master key). A new master key, or a company
+    key SocialAPI rejects (brand or key deleted in its dashboard), rebuilds the brand and key once (`_heal`, then a
+    retry); brands are found by name first, so there are no duplicates.
+  - **Connect only:** pasted tokens for social and ad platforms are 409 (`integration_service.CONNECT_ONLY`); existing
+    connections keep working. Store, CRM and email forms are unchanged.
+  - **Ads in Command Chat (BE-102):** Zernio first (`publish_zernio_campaign`); `create_ai_campaign` only for
+    `direct_ad_platforms`; neither → the `ad_connection` question. Skip a job: `POST
+    /orchestrator/plans/{id}/actions/{i}/skip` (`orchestrator_service.skip_action`).
+- **Organic posts through SocialAPI (2026-10-11): SPEC-BE-104 + SPEC-FE-071.** Verified with dev fakes on the live DB
+  (12 rolled-back checks); the FE browser E2E is pending.
+  - **Which account:** when a platform (facebook/instagram/tiktok/linkedin) has no usable direct connection, the
+    company's SocialAPI account for it is the platform's account (`connected_via: "socialapi"`). It comes from
+    `socialapi_service.organic_accounts`: cached 60 s, never creates a brand, and any error means "none".
+  - **Direct first:** a direct connection always wins.
+  - **Publishing:** `connection()` returns `via`; `social_base.adapter(platform, via)` → `integrations/socialapi_publisher.py`.
+    It uploads the media bytes, then `POST /posts` with `publish_now`.
+  - **Storage:** `external_post_id` = the SocialAPI post id; `scheduled_posts.metadata.via` drives the results import.
+  - **Not ready yet:** a Facebook login with no Page chosen; Instagram stories via SocialAPI are refused.
+- **Per-company key access (2026-10-11): SPEC-BE-103 + SPEC-FE-069.** Verified on the live DB (28 rolled-back checks);
+  the FE browser E2E is pending. No DDL.
+  - **Store:** `platform_settings` row `company_access` = `{tenant_id: {group: false}}`. A missing entry means allowed,
+    so everything is on by default. Groups: ai, socialapi, zernio, meta_app, tiktok_app, linkedin_app.
+  - **Routes:** `GET /platform/companies`, `PUT /platform/companies/{id}/access` (audited). Screen: the Companies section
+    on `/admin`.
+  - **Enforcement:** `platform_service.allowed/require` (403 + `BLOCKED[group]`) at the company entry points:
+    - **ai:** `resolve_chain`/`provider_key`, plus `llm_client`, which has no `.env`/mock fallback when blocked;
+    - **socialapi:** `socialapi_service._key`;
+    - **zernio:** `zernio_service.profile_id`;
+    - **sign-in apps:** the connect/callback functions, and `_needs_refresh`, so existing tokens just run out.
+  - **No company = allowed:** jobs and embeddings.
 - Worldwide company settings (SPEC-BE-072 + SPEC-FE-048, 2026-10-02):
   - `utils/locale_data.py` (Babel/CLDR + pytz) serves every country, currency, language and timezone through `GET /tenants/locale-options`. `PATCH /tenants/me` validates against it.
   - Sign-up takes the browser's timezone/country as hints: old zone names are mapped, unusable values dropped, and the currency follows the country.
@@ -620,8 +721,9 @@ Documented in `frontend/CLAUDE.md`, which is authoritative. In short:
   (`replaced_by`). A reused revoked token revokes all of that user's tokens.
   `POST /auth/logout {refresh_token}` revokes it (always 204), and a password reset
   revokes all of them. Tokens issued before 2026-10-02 have no row: those users sign
-  in once more. Access tokens stay stateless (15 minutes). Known limit: two tabs
-  refreshing in the same instant can trip reuse detection and sign the user out.
+  in once more. Access tokens stay stateless (15 minutes). Reuse of a token rotated less
+  than `REUSE_GRACE` (30 s) ago is a tab race, not a theft: 401, nothing revoked (SPEC-FE-070,
+  2026-10-11; the frontend also serialises refreshes across tabs with a Web Lock).
 - ✅ Third-party credentials and per-company LLM keys (SPEC-BE-052/053) are
   Fernet-encrypted with `ENCRYPTION_KEY` (`utils/crypto`), never returned (only
   masked), and never logged. Integration test calls go through an SSRF guard.
