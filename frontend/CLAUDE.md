@@ -35,8 +35,8 @@ missing or broken, stop and report it.
 
 - **Page routes:** `app/(app)/<page>/page.tsx`. The `(app)` route group adds no
   URL segment; `app/(app)/layout.tsx` wraps every page in the shell (sidebar +
-  topbar). `app/page.tsx` only redirects `/` to `/dashboard`. Routes outside the
-  group (including 404) render without the shell.
+  topbar). `app/page.tsx` is the public PilotSonic website (SPEC-FE-072). Routes
+  outside the group (including 404) render without the shell.
 - **Shell:** `components/shell/` (`sidebar.tsx`, `topbar.tsx`).
 - **Shared UI primitives:** `components/ui/`.
 - **Domain components:** `components/<domain>/`, one folder per nav page,
@@ -220,9 +220,10 @@ spec justifies it.
   - **Idle composer (SPEC-FE-061 Amendment A):** with no messages the composer is centred under the greeting, then moves
     to the bottom on the first send. `.cc-header`/`.cc-composer-wrap` must not shrink, or the textarea is squeezed to
     one line.
-- Responsive shell (SPEC-FE-063, 2026-10-10): from 1024 px the sidebar is the sticky 240 px column. Below it is a drawer
-  opened by the top bar's ☰ (window event `shell:toggle-nav`, `TOGGLE_NAV_EVENT` in `sidebar.tsx`). It closes on ✕, the
-  backdrop, Escape or a page change. Page padding is 16 px below 1024 px.
+- Responsive shell (SPEC-FE-063, 2026-10-10) was replaced by the PilotSonic design (SPEC-FE-072, 2026-10-19..21):
+  floating sidebar + glass top bar (`components/shell/`), command palette (Ctrl/⌘ K), Preferences (`prefs.ts`, key
+  `pilotsonic.prefs`, applied before first paint by the boot script in `app/layout.tsx`), and below 900 px a bottom tab
+  bar with a More sheet instead of the drawer.
 - Files → job lists (SPEC-FE-064/065, 2026-10-10; **browser E2E with real AI: 21/22, the 22nd the deliberate .exe 422**):
   - **Attachments** (`components/chat/attachments.tsx`): 📎, drag-and-drop over the chat and paste; chips with upload
     progress → "Reading…" → the backend's summary. Send waits for uploads and posts `file_ids`; sent bubbles show file
