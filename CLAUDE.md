@@ -759,3 +759,12 @@ the file directly before relying on this behavior existing.
 - If you touch `requirements.txt`, env vars, or `config.py`, check
   `specs/SPEC-BE-001..003.md` and update the matching spec rather than editing
   the code in isolation.
+- **Production (since 2026-10-21):** cPanel host s106.srvx.ws (LiteSpeed + CloudLinux
+  selectors), database still Neon. Backend = Python 3.12 app at api.pilotsonic.com from
+  `backend/passenger_wsgi.py` (a2wsgi, installed by the setup script, not in
+  `requirements.txt`; the server forks after loading it, so the a2wsgi loop is per process
+  and the startup DB connection is disposed). `SCHEDULER_ENABLED=false` there; jobs run from
+  the crontab via `backend/run_jobs.py`, which must `import app.main` so every ORM model is
+  registered. Frontend = Node app at pilotsonic.com. Setup scripts:
+  `backend/deploy/cpanel/setup.sh`, `frontend/deploy/cpanel/{setup.sh,app.js}`. The Railway
+  and Vercel files are from earlier hosts (Railway was stopped, not deleted).

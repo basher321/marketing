@@ -1,0 +1,2 @@
+# Shell scripts run on the Linux cPanel host; CRLF breaks bash there.
+*.sh text eol=lf
