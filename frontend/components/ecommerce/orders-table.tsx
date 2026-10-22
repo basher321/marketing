@@ -1,31 +1,20 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { channelLabel } from "@/components/customer/conversations-table";
+import { ConfirmationBadge, STATUS_BADGES } from "@/components/orders/status";
 import { fetchOrders, orderKeys } from "@/lib/api/orders";
-import { ORDER_STATUSES, type OrderListItem, type OrderStatus } from "@/lib/types/orders";
 import { formatMoney } from "@/lib/format/money";
+import { ORDER_STATUSES, type OrderListItem, type OrderStatus } from "@/lib/types/orders";
 
-const COLUMN_COUNT = 9;
+const COLUMN_COUNT = 10;
 const PAGE_SIZE = 25;
 
 // Filter controls share the .form-row input look (mockup), inline.
 const CONTROL = "rounded-md border border-border bg-panel px-3 py-2 text-[13.5px] text-text";
-
-// Badge per live order_status (the full enum, SPEC-BE-041): waiting -> neutral,
-// being worked on -> warn, on its way / done -> success, cancelled or refunded
-// -> danger. An unknown value renders as plain text, never an invented badge.
-const STATUS_BADGES: Record<OrderStatus, { label: string; className: string }> = {
-  pending: { label: "Pending", className: "badge badge-neutral" },
-  confirmed: { label: "Confirmed", className: "badge badge-warn" },
-  processing: { label: "Processing", className: "badge badge-warn" },
-  shipped: { label: "Shipped", className: "badge badge-success" },
-  delivered: { label: "Delivered", className: "badge badge-success" },
-  cancelled: { label: "Cancelled", className: "badge badge-danger" },
-  refunded: { label: "Refunded", className: "badge badge-danger" },
-};
 
 // Same money formatting as the Products table: "৳1,850", "$12.50", "¥1,500".
 function formatTotal(o: OrderListItem): string {
@@ -61,8 +50,9 @@ function MessageRow({ children, className }: { children: ReactNode; className?: 
 
 // Orders tab (SPEC-FE-026): status filter + search, the orders table, and
 // 25-per-page pagination driven by the backend's `total`.
-export default function OrdersTable() {
-  const [status, setStatus] = useState<OrderStatus | null>(null);
+// SPEC-FE-073: also the Orders page; `initialStatus` comes from ?status= links.
+export default function OrdersTable({ initialStatus = null }: { initialStatus?: OrderStatus | null } = {}) {
+  const [status, setStatus] = useState<OrderStatus | null>(initialStatus);
   const [searchInput, setSearchInput] = useState("");
   const [q, setQ] = useState("");
   const [page, setPage] = useState(0);
@@ -132,6 +122,7 @@ export default function OrdersTable() {
               <th>Items</th>
               <th>Total</th>
               <th>Payment</th>
+              <th>SMS</th>
               <th>Status</th>
               <th aria-label="Actions" />
             </tr>
@@ -150,16 +141,26 @@ export default function OrdersTable() {
                 const badge = STATUS_BADGES[o.status];
                 return (
                   <tr key={o.id}>
-                    <td className="font-semibold">{o.order_number}</td>
+                    <td className="font-semibold">
+                      <Link href={`/orders/${o.id}`} className="text-accent">
+                        {o.order_number}
+                      </Link>
+                    </td>
                     <td>{formatPlacedAt(o.placed_at)}</td>
                     <td>{o.customer_name ?? <span className="text-muted">Guest</span>}</td>
                     <td>{channelLabel(o.channel)}</td>
                     <td>{o.item_count}</td>
                     <td>{formatTotal(o)}</td>
                     <td>{formatPayment(o)}</td>
+                    <td>
+                      <ConfirmationBadge state={o.confirmation_state} />
+                    </td>
                     <td>{badge ? <span className={badge.className}>{badge.label}</span> : o.status}</td>
-                    {/* No order actions are defined yet: a static glyph, as in Products. */}
-                    <td className="text-muted">⋮</td>
+                    <td>
+                      <Link href={`/orders/${o.id}`} className="btn btn-secondary btn-sm no-underline">
+                        Open
+                      </Link>
+                    </td>
                   </tr>
                 );
               })

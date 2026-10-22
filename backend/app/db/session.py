@@ -22,6 +22,9 @@ engine = create_engine(
     pool_size=settings.DATABASE_POOL_SIZE,
     max_overflow=settings.DATABASE_MAX_OVERFLOW,
     echo=settings.APP_DEBUG,
+    # A serverless Postgres (Neon) suspends when idle and drops open
+    # connections; check each pooled connection before handing it out.
+    pool_pre_ping=True,
     future=True,
 )
 

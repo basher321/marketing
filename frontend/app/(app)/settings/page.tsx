@@ -4,13 +4,16 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useState } from "react";
 
-import BrandingForm from "@/components/settings/branding-form";
+import { BusinessTypePicker } from "@/components/ecommerce/catalog-extras";
 import CompanyForm from "@/components/settings/company-form";
 import DangerZone from "@/components/settings/danger-zone";
+import SmsCard from "@/components/settings/sms-card";
 import UsersRoles from "@/components/settings/users-roles";
+import { ecommerceKeys, fetchEcommerceConfig } from "@/lib/api/ecommerce";
 import { fetchTenant, fetchUsers, tenantKeys } from "@/lib/api/tenant";
 
-const TABS = ["Company", "Branding", "Users & Roles", "API & AI keys", "Data"] as const;
+// SPEC-FE-073 adds SMS, SPEC-FE-075 Store; Branding moved to /branding (SPEC-FE-077).
+const TABS = ["Company", "Branding", "Store", "SMS", "Users & Roles", "API & AI keys", "Data"] as const;
 type Tab = (typeof TABS)[number];
 
 // Organization Settings (SPEC-FE-036). The user API is owner-only, so a
@@ -21,12 +24,13 @@ export default function SettingsPage() {
   const tenant = useQuery({ queryKey: tenantKeys.me, queryFn: fetchTenant });
   const users = useQuery({ queryKey: tenantKeys.users, queryFn: fetchUsers, retry: false });
   const isOwner = users.isSuccess;
+  const store = useQuery({ queryKey: ecommerceKeys.config, queryFn: fetchEcommerceConfig, enabled: tab === "Store" });
   const tabs = TABS.filter((t) => t !== "Data" || isOwner);
 
   return (
     <>
-      <h1 className="m-0 mb-1 text-[22px] font-bold">{"Organization Settings"}</h1>
-      <p className="m-0 mb-5 text-muted">{"Company profile, branding, people and data."}</p>
+      <h1 className="page-title">{"Organization Settings"}</h1>
+      <p className="page-subtitle">{"Company profile, branding, people and data."}</p>
       <div className="tabs" role="tablist">
         {tabs.map((t) => (
           <div
@@ -53,7 +57,26 @@ export default function SettingsPage() {
       ) : tab === "Company" ? (
         <CompanyForm key={tenant.data.id} tenant={tenant.data} />
       ) : tab === "Branding" ? (
-        <BrandingForm tenant={tenant.data} />
+        <div className="card">
+          <h3 className="mt-0">Branding</h3>
+          <p className="text-[13px]">Your profile, the company logo and brand voice are on the Branding page.</p>
+          <Link href="/branding" className="btn no-underline">
+            Open Branding →
+          </Link>
+        </div>
+      ) : tab === "Store" ? (
+        <div className="card">
+          <h3 className="mt-0">What you sell</h3>
+          {store.isPending ? (
+            <p className="text-muted">Loading…</p>
+          ) : store.isError ? (
+            <p className="text-danger">{store.error.message}</p>
+          ) : (
+            <BusinessTypePicker config={store.data} compact />
+          )}
+        </div>
+      ) : tab === "SMS" ? (
+        <SmsCard />
       ) : tab === "Users & Roles" ? (
         <UsersRoles />
       ) : tab === "API & AI keys" ? (

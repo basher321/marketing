@@ -10,6 +10,7 @@ real accounts. Nothing here runs unless that flag is set; it never touches the
 network. Fake objects live in memory for the life of the process.
 """
 import itertools
+import uuid
 import json
 import re
 from datetime import date, datetime, timedelta, timezone
@@ -121,12 +122,38 @@ def _meta_organic(request: httpx.Request, path: str, params: dict[str, str], for
     return None
 
 
+# WhatsApp Cloud API (SPEC-BE-112): phone number id 7000001, WABA 8000001.
+# WA_CALLS records each sent message; WA_FAIL["send"] = message makes sends fail.
+WA_CALLS: list[dict[str, Any]] = []
+WA_FAIL: dict[str, str] = {}
+WA_PHONE_ID, WA_WABA_ID = "7000001", "8000001"
+
+
+def _whatsapp(request: httpx.Request, path: str) -> httpx.Response | None:
+    if path == WA_PHONE_ID and request.method == "GET":
+        return _json({"id": WA_PHONE_ID, "display_phone_number": "+1 555-010-0100", "verified_name": "Fake Shop WA",
+                      "quality_rating": "GREEN"})
+    if path == f"{WA_WABA_ID}/subscribed_apps" and request.method == "POST":
+        return _json({"success": True})
+    if path == f"{WA_PHONE_ID}/messages" and request.method == "POST":
+        body = json.loads(request.content or b"{}")
+        if WA_FAIL.get("send"):
+            return _json({"error": {"message": WA_FAIL["send"], "type": "OAuthException", "code": 131047}}, 400)
+        WA_CALLS.append(body)
+        return _json({"messaging_product": "whatsapp", "contacts": [{"wa_id": body.get("to")}],
+                      "messages": [{"id": "wamid." + uuid.uuid4().hex}]})
+    return None
+
+
 def _meta(request: httpx.Request) -> httpx.Response:
     currency = get_settings().META_FAKE_CURRENCY
     path = request.url.path.split("/", 2)[-1] if request.url.path.count("/") >= 2 else ""
     params = dict(request.url.params)
     form = _form(request)
     method = request.method
+    whatsapp = _whatsapp(request, path)
+    if whatsapp is not None:
+        return whatsapp
     organic = _meta_organic(request, path, params, form)
     if organic is not None:
         return organic
@@ -1280,7 +1307,37 @@ def _zernio(request: httpx.Request, path: str) -> httpx.Response:
     return _json({"error": f"Fake Zernio: no fixture for {method} {path}", "type": "not_found"}, 404)
 
 
+# Twilio SMS (SPEC-BE-108). SMS_CALLS records every sent message (from, to, body);
+# SMS_FAIL["send"] = Twilio error message makes the next sends fail; the account
+# sid "AC_bad" answers 401. The account has three SMS numbers.
+SMS_CALLS: list[dict[str, str]] = []
+SMS_FAIL: dict[str, str] = {}
+TWILIO_NUMBERS = ("+15005550006", "+15005550007", "+15005550008")
+
+
+def _twilio(request: httpx.Request, path: str) -> httpx.Response:
+    auth = request.headers.get("authorization", "")
+    if "/Accounts/AC_bad" in path or not auth:
+        return _json({"code": 20003, "message": "Authenticate", "status": 401}, 401)
+    if path.endswith("/IncomingPhoneNumbers.json"):
+        return _json({"incoming_phone_numbers": [
+            {"phone_number": n, "friendly_name": f"Fake {n}", "capabilities": {"sms": True, "voice": True}}
+            for n in TWILIO_NUMBERS
+        ]})
+    if path.endswith("/Messages.json") and request.method == "POST":
+        form = _form(request)
+        if SMS_FAIL.get("send"):
+            return _json({"code": 21211, "message": SMS_FAIL["send"], "status": 400}, 400)
+        SMS_CALLS.append({"from": form.get("From", ""), "to": form.get("To", ""), "body": form.get("Body", ""),
+                          "callback": form.get("StatusCallback", "")})
+        return _json({"sid": "SM" + uuid.uuid4().hex, "status": "queued"}, 201)
+    if path.count("/") == 3 and path.endswith(".json"):
+        return _json({"friendly_name": "Fake Twilio", "status": "active"})
+    return _json({"code": 20404, "message": f"Fake Twilio: no fixture for {request.method} {path}"}, 404)
+
+
 _AD_HOSTS = (
+    ("api.twilio.com", "twilio", _twilio),
     ("zernio.com", "zernio", _zernio),
     ("api.social-api.ai", "socialapi", _socialapi),
     ("generativelanguage.googleapis.com", "gemini", _gemini),

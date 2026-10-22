@@ -69,7 +69,7 @@ export default function SocialCallbackPage() {
   }
   return (
     <div className="mx-auto max-w-[560px]">
-      <h1 className="m-0 mb-1 text-[22px] font-bold">Connect {FLOW_LABEL[flow]}</h1>
+      <h1 className="page-title">Connect {FLOW_LABEL[flow]}</h1>
       {denied ? (
         <p className="text-[13px] text-danger">
           {FLOW_LABEL[flow]} didn&apos;t connect: {denied}. {back}

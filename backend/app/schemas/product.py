@@ -21,3 +21,6 @@ class ProductListItem(BaseModel):
     # True when any of those inventory rows has available <= reorder_point - the same
     # rule as GET /inventory/low-stock (SPEC-BE-005), so the UI never invents a cutoff.
     low_stock: bool
+    # SPEC-BE-111: the product's category.
+    category_id: str | None = None
+    category: str | None = None

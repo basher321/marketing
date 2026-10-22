@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["cle1"],
+  "crons": [
+    { "path": "/cron/publish_tasks", "schedule": "* * * * *" },
+    { "path": "/cron/generation_tasks", "schedule": "* * * * *" },
+    { "path": "/cron/plan_jobs", "schedule": "* * * * *" },
+    { "path": "/cron/workflow_tasks", "schedule": "* * * * *" },
+    { "path": "/cron/social_token_refresh", "schedule": "*/30 * * * *" },
+    { "path": "/cron/ad_tasks", "schedule": "0 */3 * * *" },
+    { "path": "/cron/organic_metrics", "schedule": "15 */6 * * *" },
+    { "path": "/cron/sync_tasks", "schedule": "30 */6 * * *" }
+  ]
+}

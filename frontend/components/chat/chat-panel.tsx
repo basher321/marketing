@@ -435,11 +435,13 @@ function bubbleText(m: ChatMessage): string {
 // voice): plan cards render for every plan reply (also after a reload, via
 // plan_id), clarifying questions show what they're waiting for, and "Start
 // over" drops the pending draft.
-export default function ChatPanel({ chatId = null, newChatProjectId = null, onChatCreated, onOpenHistory }: {
+export default function ChatPanel({ chatId = null, newChatProjectId = null, initialText = "", onChatCreated, onOpenHistory }: {
   /** The open chat (SPEC-FE-066); null = a new, empty chat. */
   chatId?: string | null;
   /** The project a new chat starts in. */
   newChatProjectId?: string | null;
+  /** Put in the composer, not sent: a Dashboard quick action or palette request (?ask=). */
+  initialText?: string;
   onChatCreated?: (id: string) => void;
   onOpenHistory?: () => void;
 } = {}) {
@@ -451,7 +453,7 @@ export default function ChatPanel({ chatId = null, newChatProjectId = null, onCh
   });
   const chatInfo = useQuery({ queryKey: orchestratorKeys.chat(chatId ?? "none"), queryFn: () => fetchChat(chatId as string), enabled: !!chatId });
   const newProject = useQuery({ queryKey: orchestratorKeys.project(newChatProjectId ?? "none"), queryFn: () => fetchProject(newChatProjectId as string), enabled: !chatId && !!newChatProjectId });
-  const [text, setText] = useState("");
+  const [text, setText] = useState(initialText);
   const [voiceMark, setVoiceMark] = useState<{ language: string | null } | null>(null);
   const [sentPlans, setSentPlans] = useState<Record<string, PlanRead>>({});
   const bottom = useRef<HTMLDivElement>(null);

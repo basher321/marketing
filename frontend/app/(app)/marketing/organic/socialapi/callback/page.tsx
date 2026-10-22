@@ -79,7 +79,7 @@ export default function SocialApiCallbackPage() {
   };
   return (
     <div className="mx-auto max-w-[560px]">
-      <h1 className="m-0 mb-1 text-[22px] font-bold">Connect {sapiLabel(result?.platform ?? req?.platform)} via SocialAPI</h1>
+      <h1 className="page-title">Connect {sapiLabel(result?.platform ?? req?.platform)} via SocialAPI</h1>
       {finish.isError ? (
         <p className="text-[13px] text-danger">
           {errorText(finish.error)} {back}

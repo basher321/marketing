@@ -15,13 +15,23 @@ from app.models.product import Product, ProductVariant
 logger = structlog.get_logger(__name__)
 
 
-def list_products(db: Session, tenant_id: str) -> list[dict[str, Any]]:
-    products = (
-        db.query(Product)
-        .filter(Product.tenant_id == tenant_id, Product.deleted_at.is_(None))
-        .order_by(Product.updated_at.desc(), Product.id)
-        .all()
-    )
+def list_products(db: Session, tenant_id: str, category_id: str | None = None) -> list[dict[str, Any]]:
+    query = db.query(Product).filter(Product.tenant_id == tenant_id, Product.deleted_at.is_(None))
+    if category_id:
+        # SPEC-BE-111: ?category_id= (a value that isn't a uuid matches nothing).
+        query = query.filter(text("products.category_id::text = :cat")).params(cat=category_id)
+    products = query.order_by(Product.updated_at.desc(), Product.id).all()
+    # SPEC-BE-111: category id + name per product (category_id isn't mapped on the model).
+    categories: dict[str, tuple[str | None, str | None]] = {}
+    if products:
+        categories = {
+            str(r.id): (str(r.cid) if r.cid else None, r.name)
+            for r in db.execute(
+                text("SELECT p.id, p.category_id AS cid, c.name FROM products p LEFT JOIN product_categories c "
+                     "ON c.id = p.category_id AND c.tenant_id = :t WHERE p.tenant_id = :t AND p.id::text = ANY(:ids)"),
+                {"t": tenant_id, "ids": [str(p.id) for p in products]},
+            )
+        }
     # Stock per product in one grouped query: inventory rows reached via product_variants,
     # tenant-scoped on inventory.tenant_id and restricted to this tenant's product ids.
     # Only product_variants.id/product_id are referenced (the ProductVariant model maps
@@ -57,6 +67,8 @@ def list_products(db: Session, tenant_id: str) -> list[dict[str, Any]]:
             "updated_at": p.updated_at.astimezone(timezone.utc),
             "stock": stock[str(p.id)][0] if str(p.id) in stock else None,
             "low_stock": stock[str(p.id)][1] if str(p.id) in stock else False,
+            "category_id": categories.get(str(p.id), (None, None))[0],
+            "category": categories.get(str(p.id), (None, None))[1],
         }
         for p in products
     ]

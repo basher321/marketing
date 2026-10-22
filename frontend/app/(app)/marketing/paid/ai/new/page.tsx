@@ -137,8 +137,8 @@ export default function NewAICampaignPage() {
       <Link href="/marketing/paid/ad-manager" className="mb-3 inline-block text-[13px] text-accent underline">
         ← Back to the Ad Manager
       </Link>
-      <h1 className="m-0 mb-1 text-[22px] font-bold">Create a campaign with AI</h1>
-      <p className="m-0 mb-4 text-muted">Describe what you want to promote. The AI plans the campaign, finds the audience, writes the ads and makes the images, using only your real products, prices and brand rules.</p>
+      <h1 className="page-title">Create a campaign with AI</h1>
+      <p className="page-subtitle mb-4">Describe what you want to promote. The AI plans the campaign, finds the audience, writes the ads and makes the images, using only your real products, prices and brand rules.</p>
       <p className="m-0 mb-4 rounded border border-border bg-accent-soft p-2 text-[13px]" data-testid="review-note">
         AI prepares everything; <b>you review and publish</b>. Nothing goes live until you click Publish.
       </p>

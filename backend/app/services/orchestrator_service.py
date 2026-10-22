@@ -427,7 +427,19 @@ def _organic_context(db: Session, tenant_id: str, tz: str) -> dict[str, Any]:
                             for a in social_account_service.list_accounts(db, tenant_id)["items"]],
         "recent_organic": recent_posts,
         "recent_media": recent_media,
+        # SPEC-BE-114: the order lifecycle and whether confirmation SMS can be sent.
+        "order_statuses": ["pending", "awaiting_confirmation", "confirmed", "processing", "shipped", "delivered",
+                           "returned", "cancelled", "refunded"],
+        "sms_ready": _sms_ready(db, tenant_id),
     }
+
+
+def _sms_ready(db: Session, tenant_id: str) -> bool:
+    from app.models.tenant import Tenant
+    from app.services import sms_service
+
+    tenant = db.get(Tenant, tenant_id)
+    return tenant is not None and sms_service.readiness(db, tenant)[0] == "ready"
 
 
 def _system_prompt() -> str:
@@ -449,7 +461,8 @@ def _system_prompt() -> str:
             "- Organic posts: create_organic_posts (several, AI) or create_organic_post (one); then schedule_organic_posts with content_ids \"$<n>.content_ids\" only when the user asks to schedule/publish. \"Over the next N days\" = count N, spread one_per_day, start_date = tomorrow (today_local + 1) unless the user says today. \"Tomorrow at 8 PM\" = start_date today_local + 1, time_local \"20:00\". Times are the company's local time; no timezone unless the user names one. If the user gives no time, OMIT time_local so the system asks.",
             "- \"Create a photo/video ... and post/schedule it\": generate_photo / generate_video first, then create_organic_post with media_id \"$1.media_id\", then schedule_organic_posts with \"$2.content_id\".",
             "- \"The caption\", \"this post\", \"that image\": use the newest item in recent_organic / recent_media. If several posts were made by the same latest step and the user didn't say which, OMIT content_id so the system asks. Never invent ids. \"Keep the image\" = regenerate_organic_copy (it never changes media).",
-            "- Read-only questions use inspect_* actions.",
+            "- Read-only questions use inspect_* actions. Orders waiting for the customer's SMS confirmation = orders_awaiting_confirmation; sales/profit/loss for a period = profit_and_loss (\"this month\" = mtd); customers without a reply = inspect_conversations with unreplied true.",
+            "- Order changes use the order NUMBER the user wrote (update_order_status, send_order_confirmation). Cancelling or returning needs the user's reason: OMIT reason if they gave none so the system asks.",
             "- Product listings: create_product_listing writes a NEW product (new_sku only when the user gives one; price only from the user, which includes the chat project's files, else OMIT it). To publish, post or advertise a product listed in the same plan use \"$<n>.product_id\" (publish_product product) or \"$<n>.skus\" (product_skus) of that step and put n in depends_on. publish_product only when the user asks to publish / put it live on the website or store.",
             "- If the context has a project, it is background for this chat: follow its instructions as preferences (tone, currency, brand) and use its file values (prices, SKUs, names) as the user's own. Its name and description are labels, not a request: plan only what the command asks.",
             "- If the context has a pending_draft and the message answers it, return the COMPLETE updated draft with new_request=false. If the message is a different request, ignore the draft and set new_request=true.",

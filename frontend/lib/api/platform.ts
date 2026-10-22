@@ -4,6 +4,10 @@
  */
 import type {
   AccessGroup,
+  AppBranding,
+  AppBrandingSlot,
+  IntegrationErrorRow,
+  IntegrationHealth,
   CompanyAccess,
   CompanyList,
   PlatformMe,
@@ -18,6 +22,9 @@ export const platformKeys = {
   aiModels: ["platform", "ai-models"] as const,
   settings: ["platform", "settings"] as const,
   companies: (q: string, page: number) => ["platform", "companies", q, page] as const,
+  branding: ["platform", "branding"] as const,
+  health: ["platform", "integrations", "health"] as const,
+  errors: (provider: string, cursor: string | null) => ["platform", "integrations", "errors", provider, cursor] as const,
 };
 
 export function fetchPlatformMe(): Promise<PlatformMe> {
@@ -47,4 +54,36 @@ export function fetchCompanies(q: string, page: number, pageSize = 25): Promise<
 /** Only the groups to change: true = may use PilotSonic's key, false = blocked. */
 export function saveCompanyAccess(tenantId: string, access: Partial<Record<AccessGroup, boolean>>): Promise<CompanyAccess> {
   return apiFetch<CompanyAccess>(`/api/v1/platform/companies/${tenantId}/access`, { method: "PUT", body: { access } });
+}
+
+
+/** GET /platform/branding (SPEC-BE-113): public, the login page reads it too. */
+export function fetchAppBranding(): Promise<AppBranding> {
+  return apiFetch<AppBranding>("/api/v1/platform/branding");
+}
+
+export function saveAppBranding(body: { app_name?: string; tagline?: string }): Promise<AppBranding> {
+  return apiFetch<AppBranding>("/api/v1/platform/branding", { method: "PUT", body });
+}
+
+export function uploadAppBrandingImage(slot: AppBrandingSlot, file: File): Promise<AppBranding> {
+  const form = new FormData();
+  form.append("file", file);
+  return apiFetch<AppBranding>(`/api/v1/platform/branding/${slot}`, { method: "PUT", body: form });
+}
+
+export function removeAppBrandingImage(slot: AppBrandingSlot): Promise<AppBranding> {
+  return apiFetch<AppBranding>(`/api/v1/platform/branding/${slot}`, { method: "DELETE" });
+}
+
+/** Super admin: integration health and the errors log (SPEC-BE-113 FR3). */
+export function fetchIntegrationHealth(): Promise<{ items: IntegrationHealth[] }> {
+  return apiFetch<{ items: IntegrationHealth[] }>("/api/v1/platform/integrations/health");
+}
+
+export function fetchIntegrationErrors(provider: string, cursor: string | null): Promise<{ items: IntegrationErrorRow[]; next_cursor: string | null }> {
+  const s = new URLSearchParams();
+  if (provider) s.set("provider", provider);
+  if (cursor) s.set("cursor", cursor);
+  return apiFetch(`/api/v1/platform/integrations/errors?${s.toString()}`);
 }

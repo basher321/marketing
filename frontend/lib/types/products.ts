@@ -23,4 +23,7 @@ export interface ProductListItem {
   stock: number | null;
   /** The backend's own low-stock flag (available <= reorder_point). */
   low_stock: boolean;
+  /** SPEC-BE-111: the product's category. */
+  category_id: string | null;
+  category: string | null;
 }

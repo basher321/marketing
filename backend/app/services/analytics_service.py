@@ -1,5 +1,5 @@
 """Analytics: Sales tab (SPEC-BE-015/016), activity feed (SPEC-BE-022) and the Ads /
-Engagement / Customer Service reports (SPEC-BE-050)."""
+Engagement / Customer Service reports (SPEC-BE-050) and profit & loss (SPEC-BE-110)."""
 from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
@@ -8,6 +8,7 @@ import structlog
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from app.core.exceptions import AppError
 from app.integrations.base_adapter import AD_RESULT_SOURCES
 from app.models.approval import ApprovalQueue
 from app.models.audit_log import AuditLog
@@ -51,18 +52,20 @@ def get_sales_summary(db: Session, tenant_id: str) -> dict[str, Any]:
     # One shared moment for every figure, including the reused SPEC-BE-006
     # order count, so all windows line up exactly. Windows match SPEC-BE-006:
     # current = [now-7d, now], previous = [now-14d, now-7d), on placed_at (UTC).
-    # Revenue sums orders.total_cents across every order status.
+    # Revenue (SPEC-BE-110 FR4, rule 1) sums orders.total_cents of sales only:
+    # confirmed, processing, shipped, delivered (not pending/cancelled/returned/refunded).
     now = datetime.now(timezone.utc)
     week_ago = now - timedelta(days=7)
     two_weeks_ago = now - timedelta(days=14)
     in_current = (Order.placed_at >= week_ago) & (Order.placed_at <= now)
     in_previous = (Order.placed_at >= two_weeks_ago) & (Order.placed_at < week_ago)
     refunded = Order.status.in_(REFUNDED_STATUSES)
+    sale = Order.status.in_(QUALIFYING_ORDER_STATUSES)
 
     rev_cur, rev_prev, all_cur, all_prev, ref_cur, ref_prev = (
         db.query(
-            func.coalesce(func.sum(Order.total_cents).filter(in_current), 0),
-            func.coalesce(func.sum(Order.total_cents).filter(in_previous), 0),
+            func.coalesce(func.sum(Order.total_cents).filter(in_current & sale), 0),
+            func.coalesce(func.sum(Order.total_cents).filter(in_previous & sale), 0),
             func.count(Order.id).filter(in_current),
             func.count(Order.id).filter(in_previous),
             func.count(Order.id).filter(in_current & refunded),
@@ -94,6 +97,7 @@ def get_sales_summary(db: Session, tenant_id: str) -> dict[str, Any]:
             db.query(utc_day, func.sum(Order.total_cents))
             .filter(
                 Order.tenant_id == tenant_id,
+                sale,
                 Order.placed_at >= datetime.combine(first_day, datetime.min.time(), timezone.utc),
                 Order.placed_at <= now,
             )
@@ -112,6 +116,15 @@ def get_sales_summary(db: Session, tenant_id: str) -> dict[str, Any]:
         "revenue_by_day": [
             {"date": d, "revenue": _major_units(by_day.get(d, 0))}
             for d in (first_day + timedelta(days=i) for i in range(7))
+        ],
+        # SPEC-BE-110 FR4: every status in the 7-day window, so excluded orders stay visible.
+        "by_status": [
+            {"status": s, "count": int(n), "value": _major_units(v)}
+            for s, n, v in db.query(Order.status, func.count(Order.id), func.coalesce(func.sum(Order.total_cents), 0))
+            .filter(Order.tenant_id == tenant_id, in_current)
+            .group_by(Order.status)
+            .order_by(Order.status)
+            .all()
         ],
     }
     logger.info(
@@ -863,3 +876,254 @@ def get_organic_report(db: Session, tenant_id: str, range_key: str) -> dict[str,
         "last_import_at": last_import.astimezone(timezone.utc) if last_import else None,
         "missing_reason": None if latest else ORGANIC_MISSING,
     }
+
+
+# ---------------------------------------------------------------------------
+# Profit & loss (SPEC-BE-110). The accounting rules live here and nowhere else;
+# PL_RULES is also returned by the API so the page can show them.
+# ---------------------------------------------------------------------------
+# Rule 1: orders that are sales (the same set as QUALIFYING_ORDER_STATUSES above).
+PL_SALE_STATUSES = QUALIFYING_ORDER_STATUSES
+PL_NOT_SALES = ("pending", "awaiting_confirmation", "cancelled", "returned", "refunded")
+PL_RANGES = ("7d", "30d", "90d", "mtd", "ytd")
+PL_MAX_DAYS = 366
+PL_RULES = [
+    "Sales are orders placed in the period (company time) that are confirmed, processing, shipped or delivered. "
+    "Orders still waiting for confirmation, and cancelled, returned or refunded orders, are not sales; they are "
+    "listed separately.",
+    "Sales revenue = order subtotal − discounts. Shipping charged to customers is its own revenue line. "
+    "Tax is not revenue (it is collected for the government) and is left out.",
+    "Product cost = quantity × the product cost saved on the order line when the order was placed, else the "
+    "variant's current cost, else the product's. A line with no cost anywhere is reported as missing, never as 0.",
+    "Ad spend = the spend imported from your connected ad accounts for the period. Spend in another currency than "
+    "the company's is left out (no conversion) and listed. Zernio spend isn't imported, so it is shown as "
+    "unavailable.",
+    "Other costs = the expenses you record (shipping you pay couriers, operating, other), by the date incurred. "
+    "Product costs are never entered as expenses, so nothing is counted twice.",
+    "Profit or loss = net revenue − product cost − ad spend − shipping expenses − operating − other.",
+]
+
+
+def pl_window(db: Session, tenant_id: str, range_key: str | None, start: date | None,
+              end: date | None) -> tuple[str, date, date]:
+    """(timezone, first day, last day), both inclusive, in company time."""
+    tz: str = db.execute(text("SELECT timezone FROM tenants WHERE id = :t"), {"t": tenant_id}).scalar() or "UTC"
+    today: date = db.execute(text("SELECT (now() AT TIME ZONE :tz)::date"), {"tz": tz}).scalar_one()
+    if start or end:
+        if not (start and end):
+            raise AppError("Give both from and to.", 422)
+        if end < start:
+            raise AppError("`to` is before `from`.", 422)
+        if (end - start).days + 1 > PL_MAX_DAYS:
+            raise AppError(f"At most {PL_MAX_DAYS} days at a time.", 422)
+        return tz, start, end
+    key = range_key or "30d"
+    if key == "mtd":
+        return tz, today.replace(day=1), today
+    if key == "ytd":
+        return tz, today.replace(month=1, day=1), today
+    return tz, today - timedelta(days=RANGE_DAYS[key] - 1), today
+
+
+def _utc_bounds(db: Session, tz: str, start: date, end: date) -> tuple[datetime, datetime]:
+    lo = db.execute(text("SELECT (CAST(:d AS timestamp) AT TIME ZONE :tz)"), {"d": start, "tz": tz}).scalar_one()
+    hi = db.execute(text("SELECT (CAST(:d AS timestamp) AT TIME ZONE :tz)"),
+                    {"d": end + timedelta(days=1), "tz": tz}).scalar_one()
+    return lo, hi
+
+
+# Per order line: the cost (rule 3) — snapshot, else variant, else product (via the
+# snapshot's product id or the variant's product). NULL = missing.
+_LINE_COST = """
+    SELECT o.id AS order_id, (o.placed_at AT TIME ZONE :tz)::date AS d, oi.quantity, oi.line_total_cents,
+           coalesce(oi.product_snapshot->>'sku', v.sku) AS sku, coalesce(oi.product_snapshot->>'title', p.title) AS title,
+           coalesce((oi.product_snapshot->>'cost_cents')::bigint, v.cost_cents, p.cost_cents) AS unit_cost
+    FROM order_items oi
+    JOIN orders o ON o.id = oi.order_id AND o.tenant_id = :t
+    LEFT JOIN product_variants v ON v.id = oi.variant_id AND v.tenant_id = :t
+    LEFT JOIN products p ON p.tenant_id = :t AND p.id = coalesce(
+        CASE WHEN oi.product_snapshot->>'product_id' ~ '^[0-9a-f-]{36}$'
+             THEN (oi.product_snapshot->>'product_id')::uuid END, v.product_id)
+    WHERE oi.tenant_id = :t AND o.placed_at >= :lo AND o.placed_at < :hi
+      AND o.status::text = ANY(:sale)
+"""
+
+
+def _pl_totals(db: Session, tenant_id: str, tz: str, start: date, end: date, currency: str,
+               detail: bool) -> dict[str, Any]:
+    lo, hi = _utc_bounds(db, tz, start, end)
+    p = {"t": tenant_id, "tz": tz, "lo": lo, "hi": hi, "sale": list(PL_SALE_STATUSES), "cur": currency,
+         "start": start, "end": end}
+    by_status = {
+        r.status: r for r in db.execute(text(
+            "SELECT status::text AS status, count(*) AS n, sum(subtotal_cents - discount_cents) AS sales, "
+            "sum(shipping_cents) AS ship, sum(total_cents) AS total FROM orders "
+            "WHERE tenant_id = :t AND placed_at >= :lo AND placed_at < :hi GROUP BY 1"), p)
+    }
+    sales = sum(int(r.sales or 0) for s, r in by_status.items() if s in PL_SALE_STATUSES)
+    shipping_charged = sum(int(r.ship or 0) for s, r in by_status.items() if s in PL_SALE_STATUSES)
+    order_count = sum(int(r.n) for s, r in by_status.items() if s in PL_SALE_STATUSES)
+    lines = db.execute(text(_LINE_COST), p).all()
+    product_cost = sum(int(r.unit_cost) * r.quantity for r in lines if r.unit_cost is not None)
+    missing = [r for r in lines if r.unit_cost is None]
+    ads = db.execute(text(
+        "SELECT source, coalesce(dimensions->>'currency', :cur) AS cur, sum(value) AS cents FROM analytics_events "
+        "WHERE tenant_id = :t AND metric = 'spend_cents' AND entity_type IN ('campaign', 'ad') "
+        "AND source = ANY(:src) AND event_time >= :lo AND event_time < :hi GROUP BY 1, 2"),
+        {**p, "src": list(AD_RESULT_SOURCES)}).all()
+    ad_by_platform: dict[str, int] = {}
+    excluded: dict[tuple[str, str], int] = {}
+    for r in ads:
+        cents = int(Decimal(r.cents or 0).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+        if str(r.cur).strip().upper() == currency.upper():
+            ad_by_platform[r.source] = ad_by_platform.get(r.source, 0) + cents
+        else:
+            excluded[(r.source, str(r.cur))] = excluded.get((r.source, str(r.cur)), 0) + cents
+    ad_spend = sum(ad_by_platform.values())
+    exp = {r.category: int(r.cents) for r in db.execute(text(
+        "SELECT category, sum(amount_cents) AS cents FROM expenses WHERE tenant_id = :t AND deleted_at IS NULL "
+        "AND incurred_on BETWEEN :start AND :end AND currency = :cur GROUP BY 1"), p)}
+    net = sales + shipping_charged
+    costs_total = product_cost + ad_spend + sum(exp.values())
+    profit = net - costs_total
+    out: dict[str, Any] = {
+        "net_cents": net, "costs_cents": costs_total, "profit_cents": profit,
+        "sales_cents": sales, "shipping_charged_cents": shipping_charged, "order_count": order_count,
+        "product_cost_cents": product_cost, "ad_spend_cents": ad_spend, "ad_by_platform": ad_by_platform,
+        "excluded": excluded, "expenses": exp, "missing": missing, "by_status": by_status,
+    }
+    if detail:
+        out["lines"] = lines
+        out["ads_by_day"] = {r.d: int(Decimal(r.cents or 0).quantize(Decimal(1), rounding=ROUND_HALF_UP)) for r in db.execute(text(
+            "SELECT (event_time AT TIME ZONE :tz)::date AS d, sum(value) AS cents FROM analytics_events "
+            "WHERE tenant_id = :t AND metric = 'spend_cents' AND entity_type IN ('campaign', 'ad') "
+            "AND source = ANY(:src) AND coalesce(dimensions->>'currency', :cur) = :cur "
+            "AND event_time >= :lo AND event_time < :hi GROUP BY 1"), {**p, "src": list(AD_RESULT_SOURCES)})}
+        out["exp_by_day"] = {r.d: int(r.cents) for r in db.execute(text(
+            "SELECT incurred_on AS d, sum(amount_cents) AS cents FROM expenses WHERE tenant_id = :t "
+            "AND deleted_at IS NULL AND currency = :cur AND incurred_on BETWEEN :start AND :end GROUP BY 1"), p)}
+        out["rev_by_day"] = {r.d: int(r.cents or 0) for r in db.execute(text(
+            "SELECT (placed_at AT TIME ZONE :tz)::date AS d, sum(subtotal_cents - discount_cents + shipping_cents) AS cents "
+            "FROM orders WHERE tenant_id = :t AND placed_at >= :lo AND placed_at < :hi AND status::text = ANY(:sale) "
+            "GROUP BY 1"), p)}
+    return out
+
+
+def _pct(cur: int, prev: int) -> float | None:
+    # Change vs the previous period; null when the previous period had nothing to compare with.
+    if prev == 0:
+        return None
+    return round((cur - prev) / abs(prev) * 100, 1)
+
+
+def get_profit_loss(db: Session, tenant_id: str, range_key: str | None = None,
+                    start: date | None = None, end: date | None = None) -> dict[str, Any]:
+    tz, first, last = pl_window(db, tenant_id, range_key, start, end)
+    currency = (db.execute(text("SELECT currency FROM tenants WHERE id = :t"), {"t": tenant_id}).scalar() or "USD").strip()
+    cur = _pl_totals(db, tenant_id, tz, first, last, currency, detail=True)
+    length = (last - first).days + 1
+    prev_last = first - timedelta(days=1)
+    prev_first = prev_last - timedelta(days=length - 1)
+    prev = _pl_totals(db, tenant_id, tz, prev_first, prev_last, currency, detail=False)
+    m = _major_units
+
+    # Costs by day: product cost of that day's sale lines + ad spend + expenses.
+    cogs_by_day: dict[date, int] = {}
+    for r in cur["lines"]:
+        if r.unit_cost is not None:
+            cogs_by_day[r.d] = cogs_by_day.get(r.d, 0) + int(r.unit_cost) * r.quantity
+    by_day, day = [], first
+    while day <= last:
+        rev = cur["rev_by_day"].get(day, 0)
+        costs = cogs_by_day.get(day, 0) + cur["ads_by_day"].get(day, 0) + cur["exp_by_day"].get(day, 0)
+        by_day.append({"date": day, "net_revenue": m(rev), "costs": m(costs), "profit": m(rev - costs)})
+        day += timedelta(days=1)
+
+    products: dict[tuple[str, str], dict[str, Any]] = {}
+    for r in cur["lines"]:
+        key = (r.sku or "", r.title or "")
+        row = products.setdefault(key, {"sku": r.sku, "title": r.title, "units": 0, "revenue_cents": 0,
+                                        "cost_cents": 0, "cost_missing": False})
+        row["units"] += r.quantity
+        row["revenue_cents"] += int(r.line_total_cents)
+        if r.unit_cost is None:
+            row["cost_missing"] = True
+        else:
+            row["cost_cents"] += int(r.unit_cost) * r.quantity
+    by_product = sorted(
+        ({"sku": v["sku"], "title": v["title"], "units": v["units"], "revenue": m(v["revenue_cents"]),
+          # A product with any line missing its cost has no total cost (never a partial number).
+          "cost": None if v["cost_missing"] else m(v["cost_cents"])} for v in products.values()),
+        key=lambda x: -x["revenue"],
+    )
+
+    st = cur["by_status"]
+    not_sales = {s: {"count": int(st[s].n) if s in st else 0, "value": m(st[s].total if s in st else 0)}
+                 for s in PL_NOT_SALES}
+    zernio = db.execute(text("SELECT settings->'zernio'->>'profile_id' FROM tenants WHERE id = :t"),
+                        {"t": tenant_id}).scalar()
+    unavailable = ([{"platform": "zernio", "reason": "Zernio campaigns are read live and their spend isn't "
+                     "imported yet, so it isn't included."}] if zernio else [])
+    exp = cur["expenses"]
+    missing = cur["missing"]
+    net = cur["net_cents"]
+    return {
+        "currency": currency,
+        "period": {"from": first, "to": last},
+        "previous_period": {"from": prev_first, "to": prev_last},
+        "revenue": {"sales": m(cur["sales_cents"]), "shipping_charged": m(cur["shipping_charged_cents"]),
+                    "net": m(net), "order_count": cur["order_count"]},
+        "not_sales": not_sales,
+        "costs": {
+            "product": m(cur["product_cost_cents"]),
+            "ad_spend": {
+                "total": m(cur["ad_spend_cents"]),
+                "by_platform": [{"platform": k, "amount": m(v)} for k, v in sorted(cur["ad_by_platform"].items())],
+                "unavailable": unavailable,
+                "excluded_currency": [{"platform": k[0], "currency": k[1], "amount": m(v)}
+                                      for k, v in sorted(cur["excluded"].items())],
+            },
+            "shipping": m(exp.get("shipping", 0)), "operating": m(exp.get("operating", 0)),
+            "other": m(exp.get("other", 0)), "total": m(cur["costs_cents"]),
+        },
+        "profit": m(cur["profit_cents"]),
+        "margin": round(cur["profit_cents"] / net * 100, 1) if net else None,
+        "complete": not missing and not unavailable,
+        "missing_cost": {"lines": len(missing), "revenue": m(sum(int(r.line_total_cents) for r in missing))},
+        "previous": {"net_revenue": m(prev["net_cents"]), "costs_total": m(prev["costs_cents"]),
+                     "profit": m(prev["profit_cents"])},
+        "delta_pct": {"revenue": _pct(net, prev["net_cents"]), "profit": _pct(cur["profit_cents"], prev["profit_cents"])},
+        "by_day": by_day,
+        "by_product": by_product,
+        "rules": PL_RULES,
+    }
+
+
+def profit_loss_csv(report: dict[str, Any]) -> str:
+    import csv
+    import io
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    c = report["costs"]
+    w.writerow(["Profit & loss", f"{report['period']['from']} to {report['period']['to']}", report["currency"]])
+    for label, value in (
+        ("Sales revenue", report["revenue"]["sales"]), ("Shipping charged", report["revenue"]["shipping_charged"]),
+        ("Net revenue", report["revenue"]["net"]), ("Product cost", c["product"]),
+        ("Ad spend", c["ad_spend"]["total"]), ("Shipping expenses", c["shipping"]),
+        ("Operating expenses", c["operating"]), ("Other expenses", c["other"]), ("Total costs", c["total"]),
+        ("Profit or loss", report["profit"]),
+    ):
+        w.writerow([label, f"{value:.2f}"])
+    w.writerow(["Complete", "yes" if report["complete"] else
+                f"no ({report['missing_cost']['lines']} line(s) without a product cost)"])
+    w.writerow([])
+    w.writerow(["Date", "Net revenue", "Costs", "Profit"])
+    for d in report["by_day"]:
+        w.writerow([d["date"], f"{d['net_revenue']:.2f}", f"{d['costs']:.2f}", f"{d['profit']:.2f}"])
+    w.writerow([])
+    w.writerow(["SKU", "Product", "Units", "Revenue", "Cost"])
+    for p in report["by_product"]:
+        w.writerow([p["sku"], p["title"], p["units"], f"{p['revenue']:.2f}",
+                    "" if p["cost"] is None else f"{p['cost']:.2f}"])
+    return buf.getvalue()

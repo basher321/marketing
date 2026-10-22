@@ -1,7 +1,8 @@
 """/analytics endpoints."""
-from typing import Any
+from datetime import date
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -13,6 +14,7 @@ from app.schemas.analytics import (
     EngagementReport,
     OrganicImportResult,
     OrganicReport,
+    ProfitLoss,
     RangeKey,
     SalesSummary,
     ServiceReport,
@@ -101,3 +103,34 @@ def sync_meta_results(
     from app.services import campaign_service
 
     return campaign_service.sync_meta_results(db, str(current_user.tenant_id), str(current_user.id))
+
+
+# ---- SPEC-BE-110: profit & loss ----
+PLRange = Literal["7d", "30d", "90d", "mtd", "ytd"]
+
+
+@router.get("/profit-loss", response_model=ProfitLoss, status_code=status.HTTP_200_OK)
+def get_profit_loss(
+    range_key: Annotated[PLRange | None, Query(alias="range")] = None,
+    start: Annotated[date | None, Query(alias="from")] = None,
+    end: Annotated[date | None, Query(alias="to")] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    return analytics_service.get_profit_loss(db, current_user.tenant_id, range_key, start, end)
+
+
+@router.get("/profit-loss.csv", response_class=Response, status_code=status.HTTP_200_OK)
+def get_profit_loss_csv(
+    range_key: Annotated[PLRange | None, Query(alias="range")] = None,
+    start: Annotated[date | None, Query(alias="from")] = None,
+    end: Annotated[date | None, Query(alias="to")] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    report = analytics_service.get_profit_loss(db, current_user.tenant_id, range_key, start, end)
+    name = f"profit-loss_{report['period']['from']}_{report['period']['to']}.csv"
+    return Response(
+        content=analytics_service.profit_loss_csv(report), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )

@@ -112,7 +112,7 @@ export default function SignupPage() {
       }
     >
       {success ? (
-        <NeuSuccess subtitle="Workspace created" />
+        <NeuSuccess title="You're all set" subtitle="Workspace created" />
       ) : (
         <>
           <h1 className="neu-title">Create workspace</h1>

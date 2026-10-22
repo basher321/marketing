@@ -278,6 +278,48 @@
           "Sure! I'll show you the low stock products.",
           {"new_request": true, "summary": "Stock", "ask": [], "actions": [{"type": "inspect_products", "params": {"low_stock_only": true}, "description": "Low stock products", "depends_on": []}]}]}],
       "expect": {"kind": "plan", "actions": [{"type": "inspect_products"}], "llm_calls": 2}
+    },
+    {
+      "id": "orders_awaiting_confirmation",
+      "what": "SPEC-BE-114: orders waiting for the customer's SMS reply (read, runs at once).",
+      "turns": [{"message": "Find orders awaiting confirmation",
+        "model_output": {"new_request": true, "summary": "orders_awaiting_confirmation", "ask": [], "actions": [{"type": "orders_awaiting_confirmation", "params": {}, "description": "orders_awaiting_confirmation", "depends_on": []}]}}],
+      "expect": {"kind": "plan", "actions": [{"type": "orders_awaiting_confirmation"}]}
+    },
+    {
+      "id": "profit_this_month",
+      "what": "SPEC-BE-114: sales and profit for the current month = profit_and_loss mtd.",
+      "turns": [{"message": "Show sales and profit for the current month",
+        "model_output": {"new_request": true, "summary": "profit_this_month", "ask": [], "actions": [{"type": "profit_and_loss", "params": {"range": "mtd"}, "description": "profit_and_loss", "depends_on": []}]}}],
+      "expect": {"kind": "plan", "actions": [{"type": "profit_and_loss", "params": {"range": "mtd"}}]}
+    },
+    {
+      "id": "unreplied_customers",
+      "what": "SPEC-BE-114: customers who haven't had a reply.",
+      "turns": [{"message": "Which customers haven't had a reply?",
+        "model_output": {"new_request": true, "summary": "unreplied_customers", "ask": [], "actions": [{"type": "inspect_conversations", "params": {"unreplied": true}, "description": "inspect_conversations", "depends_on": []}]}}],
+      "expect": {"kind": "plan", "actions": [{"type": "inspect_conversations", "params": {"unreplied": true}}]}
+    },
+    {
+      "id": "order_mark_shipped",
+      "what": "SPEC-BE-114: a status change the user asked for (a change step).",
+      "turns": [{"message": "Mark order 1003 as shipped",
+        "model_output": {"new_request": true, "summary": "order_mark_shipped", "ask": [], "actions": [{"type": "update_order_status", "params": {"order": "1003", "to": "shipped"}, "description": "update_order_status", "depends_on": []}]}}],
+      "expect": {"kind": "plan", "actions": [{"type": "update_order_status", "params": {"order": "1003", "to": "shipped"}}]}
+    },
+    {
+      "id": "order_cancel_needs_reason",
+      "what": "SPEC-BE-114: cancelling without a reason asks for it.",
+      "turns": [{"message": "Cancel order 1004",
+        "model_output": {"new_request": true, "summary": "order_cancel_needs_reason", "ask": [], "actions": [{"type": "update_order_status", "params": {"order": "1004", "to": "cancelled"}, "description": "update_order_status", "depends_on": []}]}}],
+      "expect": {"kind": "clarification", "asks": ["reason"]}
+    },
+    {
+      "id": "order_invented_number",
+      "what": "SPEC-BE-114: an order number the user never wrote is removed and asked for.",
+      "turns": [{"message": "Mark the last order as shipped",
+        "model_output": {"new_request": true, "summary": "order_invented_number", "ask": [], "actions": [{"type": "update_order_status", "params": {"order": "1007", "to": "shipped"}, "description": "update_order_status", "depends_on": []}]}}],
+      "expect": {"kind": "clarification", "asks": ["order"]}
     }
   ]
 }

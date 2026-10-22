@@ -251,3 +251,13 @@ spec justifies it.
   the backend's link, from `job-board.tsx`) on the board, the plan card and the summary. `fixable()` steps (failed
   read/draft, or queued read/draft in a submitted list) have Edit; for a failed one the form's button is "Save & retry"
   (edit, then retry).
+- Orders, Customers, P&L, business type, Inbox, Branding (SPEC-FE-073…078, 2026-10-22; **browser E2E with dev fakes: 41 checks, 40 by the script + 1 confirmed by screenshot**):
+  - **Pages:** `/orders`, `/orders/[id]` (stage tracker, `allowed_next` actions, SMS card), `/customers`, `/customers/[id]`,
+    `/branding`; Analytics › Profit & Loss (`components/analytics/profit-loss.tsx`, `?tab=profit-loss`); Settings › Store / SMS.
+  - **Shared:** order badges in `components/orders/status.tsx`; the right sheet `components/ui/side-sheet.tsx`.
+  - **E-Commerce** tabs come from `GET /ecommerce/config` (`components/ecommerce/catalog-extras.tsx`, `product-form.tsx`).
+  - **Command Chat** has Command | Inbox tabs (`?tab=inbox`, open conversation `?conv=<key>`; `?c=` stays the chat id).
+    Inbox: `components/inbox/inbox.tsx`. WhatsApp Embedded Signup is in `components/integrations/messaging-channels.tsx`
+    (the production CSP allows connect.facebook.net / *.facebook.com for it).
+  - **Nav** items may carry `minRole` (`forRole()` in `components/shell/nav.ts`, role from `GET /users/me`).
+  - **App branding** (`components/branding/app-branding.tsx`): sidebar, sign-in shell, title and favicon.

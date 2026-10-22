@@ -329,6 +329,10 @@ _PUBLISH = r"publish|launch|go live|run|start|activate|turn (?:it |them )?on|liv
 _SHIPPING = r"shipping|ship|delivery|deliver|courier|zone|rate|method|pickup|ডেলিভারি|শিপিং"
 _SCOPE: dict[str, str] = {
     "adjust_inventory": r"stock|inventory|on hand|on-hand|units|restock|quantity|qty|স্টক",
+    # SPEC-BE-114
+    "update_order_status": r"ship|shipped|deliver|delivered|cancel|confirm|process|return|refund|mark|status|"
+                           r"বাতিল|ডেলিভারি|নিশ্চিত",
+    "send_order_confirmation": r"sms|text|confirm|confirmation|message|send|remind|follow|এসএমএস|মেসেজ",
     "create_pricing_rule": r"discount|price|pricing|sale|off|offer|promo|deal|cheaper|markdown|ছাড়|দাম|ডিসকাউন্ট",
     "update_product": r"archive|unarchive|activate|deactivate|draft|rename|title|status|unpublish|publish|hide|unhide|out of stock|in stock|restore",
     "create_shipping_zone": _SHIPPING,
@@ -398,10 +402,12 @@ _NUMBER_PARAMS = {
     "age_min", "age_max", "sla_days_min", "sla_days_max",
     # SPEC-BE-098: a listing's price and weight are the user's, never the AI's.
     "price", "compare_at_price", "weight_grams",
+    # SPEC-BE-114: an order number must be one the user wrote.
+    "order", "older_than_hours",
 }
 _COUNTRY_PARAMS = {"countries", "country_codes"}
 _URL_PARAMS = {"destination_url", "landing_url", "url", "link_url"}
-_DATE_PARAMS = {"start_date", "end_date", "date"}
+_DATE_PARAMS = {"start_date", "end_date", "date", "since"}
 _SKU_PARAMS = {"sku", "skus", "product_skus"}
 
 _KEEP = object()  # "the value is supported, keep it as it is"

@@ -62,7 +62,7 @@ export default function ZernioCallbackPage() {
   );
   return (
     <div className="mx-auto max-w-[560px]">
-      <h1 className="m-0 mb-1 text-[22px] font-bold">Connecting through Zernio</h1>
+      <h1 className="page-title">Connecting through Zernio</h1>
       {finish.isError ? (
         <p className="text-[13px] text-danger">
           {errorText(finish.error)} {back}

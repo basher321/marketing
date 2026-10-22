@@ -19,11 +19,17 @@ export default function CustomerPage() {
   return (
     <>
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <h1 className="m-0 mb-1 text-[22px] font-bold">{"Customer Service"}</h1>
-        {/* SPEC-FE-054: the separate inbox for accounts connected through SocialAPI.ai */}
-        <Link href="/customer/socialapi" className="btn btn-secondary btn-sm no-underline">
-          SocialAPI inbox →
-        </Link>
+        <h1 className="page-title">{"Customer Service"}</h1>
+        <div className="flex gap-2">
+          {/* SPEC-FE-076: every channel in one place */}
+          <Link href="/chat?tab=inbox" className="btn btn-sm no-underline">
+            Open inbox →
+          </Link>
+          {/* SPEC-FE-054: the separate inbox for accounts connected through SocialAPI.ai */}
+          <Link href="/customer/socialapi" className="btn btn-secondary btn-sm no-underline">
+            SocialAPI inbox →
+          </Link>
+        </div>
       </div>
       <p className="m-0 mb-5 text-muted">{"Unified inbox — WhatsApp, Messenger, IG DM, email."}</p>
       <div className="grid-2">

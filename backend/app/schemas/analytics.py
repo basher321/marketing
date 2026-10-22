@@ -2,7 +2,7 @@
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ActivityItem(BaseModel):
@@ -25,6 +25,12 @@ class DailyRevenue(BaseModel):
     revenue: float
 
 
+class StatusTotal(BaseModel):
+    status: str
+    count: int
+    value: float
+
+
 class SalesSummary(BaseModel):
     """Analytics page Sales tab: four cards + Revenue by Day chart (SPEC-BE-015)."""
 
@@ -35,6 +41,7 @@ class SalesSummary(BaseModel):
     refund_rate_7d_pct: float
     refund_rate_7d_delta_pp: float
     revenue_by_day: list[DailyRevenue]
+    by_status: list[StatusTotal] = []
 
 
 class TopProduct(BaseModel):
@@ -232,3 +239,104 @@ class OrganicImportResult(BaseModel):
     rows: int
     platforms: dict[str, int]
     errors: list[str]
+
+
+
+# ---- SPEC-BE-110: profit & loss -------------------------------------------
+class PLPeriod(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    from_: date = Field(alias="from")
+    to: date
+
+
+class PLRevenue(BaseModel):
+    sales: float
+    shipping_charged: float
+    net: float
+    order_count: int
+
+
+class PLCountValue(BaseModel):
+    count: int
+    value: float
+
+
+class PLPlatformAmount(BaseModel):
+    platform: str
+    amount: float
+
+
+class PLUnavailable(BaseModel):
+    platform: str
+    reason: str
+
+
+class PLExcluded(BaseModel):
+    platform: str
+    currency: str
+    amount: float
+
+
+class PLAdSpend(BaseModel):
+    total: float
+    by_platform: list[PLPlatformAmount]
+    unavailable: list[PLUnavailable]
+    excluded_currency: list[PLExcluded]
+
+
+class PLCosts(BaseModel):
+    product: float
+    ad_spend: PLAdSpend
+    shipping: float
+    operating: float
+    other: float
+    total: float
+
+
+class PLMissing(BaseModel):
+    lines: int
+    revenue: float
+
+
+class PLPrevious(BaseModel):
+    net_revenue: float
+    costs_total: float
+    profit: float
+
+
+class PLDelta(BaseModel):
+    revenue: float | None
+    profit: float | None
+
+
+class PLDay(BaseModel):
+    date: date
+    net_revenue: float
+    costs: float
+    profit: float
+
+
+class PLProduct(BaseModel):
+    sku: str | None
+    title: str | None
+    units: int
+    revenue: float
+    cost: float | None
+
+
+class ProfitLoss(BaseModel):
+    currency: str
+    period: PLPeriod
+    previous_period: PLPeriod
+    revenue: PLRevenue
+    not_sales: dict[str, PLCountValue]
+    costs: PLCosts
+    profit: float
+    margin: float | None
+    complete: bool
+    missing_cost: PLMissing
+    previous: PLPrevious
+    delta_pct: PLDelta
+    by_day: list[PLDay]
+    by_product: list[PLProduct]
+    rules: list[str]

@@ -206,3 +206,39 @@ export interface ServiceReport {
   replies: ReplyCounts;
   deflection_pct: number | null;
 }
+
+// ---- Profit & loss (SPEC-FE-074 / SPEC-BE-110) --------------------------------
+export type PLRange = "7d" | "30d" | "90d" | "mtd" | "ytd";
+
+export interface ProfitLoss {
+  currency: string;
+  period: { from: string; to: string };
+  previous_period: { from: string; to: string };
+  revenue: { sales: number; shipping_charged: number; net: number; order_count: number };
+  not_sales: Record<string, { count: number; value: number }>;
+  costs: {
+    product: number;
+    ad_spend: {
+      total: number;
+      by_platform: { platform: string; amount: number }[];
+      unavailable: { platform: string; reason: string }[];
+      excluded_currency: { platform: string; currency: string; amount: number }[];
+    };
+    shipping: number;
+    operating: number;
+    other: number;
+    total: number;
+  };
+  profit: number;
+  /** Percent; null when there is no revenue. */
+  margin: number | null;
+  /** False when some order lines have no product cost, or some ad spend is unavailable. */
+  complete: boolean;
+  missing_cost: { lines: number; revenue: number };
+  previous: { net_revenue: number; costs_total: number; profit: number };
+  /** Change vs the previous period in percent; null when there is nothing to compare with. */
+  delta_pct: { revenue: number | null; profit: number | null };
+  by_day: { date: string; net_revenue: number; costs: number; profit: number }[];
+  by_product: { sku: string | null; title: string | null; units: number; revenue: number; cost: number | null }[];
+  rules: string[];
+}

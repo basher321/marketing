@@ -534,6 +534,27 @@ def organic_accounts(db: Session, tenant_id: str) -> dict[str, dict[str, Any]]:
     return out
 
 
+def inbox_accounts(db: Session, tenant_id: str) -> list[dict[str, Any]]:
+    """Messenger / Instagram accounts for the unified inbox (SPEC-BE-112): every
+    Facebook and Instagram account, with the same guards as organic_accounts (an
+    existing brand only, SocialAPI access, the 60 s cache). Errors propagate; the
+    inbox turns them into a "needs attention" note."""
+    from app.services import platform_service
+
+    if not platform_service.allowed(tenant_id, "socialapi", db):
+        return []
+    config = _config(_tenant(db, tenant_id))
+    if not (config.get("managed") and config.get("brand_id")):
+        return []
+    hit = _organic_cache.get(str(tenant_id))
+    if hit and time.monotonic() - hit[0] < ORGANIC_TTL_S:
+        items = hit[1]
+    else:
+        items = list_accounts(db, tenant_id)["items"]
+        _organic_cache[str(tenant_id)] = (time.monotonic(), items)
+    return [a for a in items if a.get("platform") in ("facebook", "instagram")]
+
+
 def organic_key(db: Session, tenant_id: str) -> str:
     """The company's restricted key, for the organic publisher (never returned)."""
     return _key(db, tenant_id)

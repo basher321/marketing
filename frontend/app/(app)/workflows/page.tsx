@@ -18,8 +18,8 @@ export default function WorkflowsPage() {
   }, []);
   return (
     <>
-      <h1 className="m-0 mb-1 text-[22px] font-bold">{"Workflow Builder"}</h1>
-      <p className="m-0 mb-5 text-muted">{"Compose triggers, conditions, and actions visually."}</p>
+      <h1 className="page-title">{"Workflow Builder"}</h1>
+      <p className="page-subtitle">{"Compose triggers, conditions, and actions visually."}</p>
       <WorkflowCanvas workflowId={selectedId} onSelect={setSelectedId} />
       <SavedWorkflowsTable selectedId={selectedId} onSelect={setSelectedId} />
     </>

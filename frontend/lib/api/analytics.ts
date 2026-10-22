@@ -8,6 +8,8 @@ import type {
   AdsReport,
   EngagementReport,
   OrderMetrics,
+  PLRange,
+  ProfitLoss,
   RangeKey,
   SalesSummary,
   ServiceReport,
@@ -50,4 +52,23 @@ export function fetchEngagementReport(range: RangeKey): Promise<EngagementReport
 
 export function fetchServiceReport(range: RangeKey): Promise<ServiceReport> {
   return apiFetch<ServiceReport>(`/api/v1/analytics/customer-service?range=${range}`);
+}
+
+/** The P&L period: a preset range or a custom from–to (company days, inclusive). */
+export type PLQuery = { range: PLRange } | { from: string; to: string };
+
+function plSearch(q: PLQuery): string {
+  return "range" in q ? `range=${q.range}` : `from=${q.from}&to=${q.to}`;
+}
+
+export const profitLossKey = (q: PLQuery) => ["analytics", "profit-loss", q] as const;
+
+/** GET /analytics/profit-loss (SPEC-BE-110 FR2). */
+export function fetchProfitLoss(q: PLQuery): Promise<ProfitLoss> {
+  return apiFetch<ProfitLoss>(`/api/v1/analytics/profit-loss?${plSearch(q)}`);
+}
+
+/** GET /analytics/profit-loss.csv (FR3), as text for a client-side download. */
+export function fetchProfitLossCsv(q: PLQuery): Promise<string> {
+  return apiFetch<string>(`/api/v1/analytics/profit-loss.csv?${plSearch(q)}`);
 }

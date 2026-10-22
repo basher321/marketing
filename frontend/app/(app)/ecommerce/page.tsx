@@ -1,54 +1,107 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { BusinessTypePicker, Categories, Payments } from "@/components/ecommerce/catalog-extras";
 import InventoryTable from "@/components/ecommerce/inventory-table";
 import OrdersTable from "@/components/ecommerce/orders-table";
 import PricingRules from "@/components/ecommerce/pricing-rules";
+import ProductForm from "@/components/ecommerce/product-form";
 import ProductsTable from "@/components/ecommerce/products-table";
 import ShippingZones from "@/components/ecommerce/shipping-zones";
+import { ecommerceKeys, fetchEcommerceConfig } from "@/lib/api/ecommerce";
 
-const TABS = ["Products", "Orders", "Inventory", "Pricing Rules", "Shipping"] as const;
-type Tab = (typeof TABS)[number];
-
-// E-Commerce Automation (SPEC-FE-011). The mockup only has content for
-// Products; the other tabs follow common e-commerce admin practice: Orders
-// (SPEC-FE-026), Inventory (SPEC-FE-027), Pricing Rules (SPEC-FE-028) and
-// Shipping (SPEC-FE-029).
+// E-Commerce Automation (SPEC-FE-011). The tabs follow the company's business type
+// (SPEC-FE-075 / GET /ecommerce/config): Products, Categories, Inventory, Orders,
+// Customers, Shipping, Payments, Pricing Rules — each only when the type has it.
+// ?tab= deep links keep working; a hidden or unknown tab falls back to the first.
 export default function EcommercePage() {
-  const [tab, setTab] = useState<Tab>("Products");
-  // Deep links from Command Chat results (SPEC-FE-041): /ecommerce?tab=shipping.
+  const config = useQuery({ queryKey: ecommerceKeys.config, queryFn: fetchEcommerceConfig });
+  const [tab, setTab] = useState<string>("products");
+  const [editing, setEditing] = useState<string | null | undefined>(undefined);
+  const tabs = config.data?.tabs ?? [];
+  const [deepLinked, setDeepLinked] = useState(false);
   useEffect(() => {
-    const wanted = new URLSearchParams(window.location.search).get("tab")?.toLowerCase();
-    const match = TABS.find((t) => t.toLowerCase().replace(" ", "-") === wanted || t.toLowerCase() === wanted);
-    if (match) setTab(match);
-  }, []);
+    if (!config.data) return;
+    const keys = config.data.tabs.map((t) => t.key);
+    // The ?tab= deep link once; later config changes (e.g. a new business type)
+    // keep the open tab unless the new type hides it.
+    if (!deepLinked) {
+      const wanted = new URLSearchParams(window.location.search).get("tab")?.toLowerCase().replace(" ", "-");
+      setTab(wanted && keys.includes(wanted) ? wanted : keys[0] ?? "products");
+      setDeepLinked(true);
+    } else {
+      setTab((cur) => (keys.includes(cur) ? cur : keys[0] ?? "products"));
+    }
+  }, [config.data, deepLinked]);
+  const fields = config.data?.product_fields ?? [];
+  const showStock = fields.some((f) => f.key === "stock");
+
   return (
     <>
-      <h1 className="m-0 mb-1 text-[22px] font-bold">{"E-Commerce Automation"}</h1>
-      <p className="m-0 mb-5 text-muted">{"Catalog, orders, inventory, pricing — all in one place."}</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="page-title">{"E-Commerce Automation"}</h1>
+          <p className="page-subtitle">{"Catalog, orders, inventory, pricing — all in one place."}</p>
+        </div>
+        {tab === "products" && config.data && (
+          <button type="button" className="btn" onClick={() => setEditing(null)}>
+            + Add product
+          </button>
+        )}
+      </div>
+      {config.isError && <p className="text-danger">Couldn&apos;t load the store settings: {config.error.message}</p>}
+      {config.data && !config.data.confirmed && <BusinessTypePicker config={config.data} />}
       <div className="tabs" role="tablist">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <div
-            key={t}
+            key={t.key}
             role="tab"
-            aria-selected={tab === t}
+            aria-selected={tab === t.key}
             tabIndex={0}
-            className={tab === t ? "tab active" : "tab"}
-            onClick={() => setTab(t)}
+            className={tab === t.key ? "tab active" : "tab"}
+            onClick={() => setTab(t.key)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") setTab(t);
+              if (e.key === "Enter" || e.key === " ") setTab(t.key);
             }}
           >
-            {t}
+            {t.label}
           </div>
         ))}
       </div>
-      {tab === "Products" && <ProductsTable />}
-      {tab === "Orders" && <OrdersTable />}
-      {tab === "Inventory" && <InventoryTable />}
-      {tab === "Pricing Rules" && <PricingRules />}
-      {tab === "Shipping" && <ShippingZones />}
+      {config.isPending ? (
+        <p className="text-muted">Loading…</p>
+      ) : tab === "products" ? (
+        <ProductsTable showStock={showStock} onEdit={(id) => setEditing(id)} />
+      ) : tab === "categories" ? (
+        <Categories />
+      ) : tab === "orders" ? (
+        <>
+          <p className="mb-3 text-[13px]">
+            <Link href="/orders?new=1" className="text-accent">+ New order</Link> · the full lifecycle is on the{" "}
+            <Link href="/orders" className="text-accent">Orders</Link> page.
+          </p>
+          <OrdersTable />
+        </>
+      ) : tab === "customers" ? (
+        <p className="card">
+          Customers have their own page with each customer&apos;s orders, messages and SMS:{" "}
+          <Link href="/customers" className="text-accent">Open Customers →</Link>
+        </p>
+      ) : tab === "inventory" ? (
+        <InventoryTable />
+      ) : tab === "pricing-rules" ? (
+        <PricingRules />
+      ) : tab === "shipping" ? (
+        <ShippingZones />
+      ) : tab === "payments" ? (
+        <Payments />
+      ) : null}
+      {editing !== undefined && (
+        <ProductForm fields={fields} productId={editing} onClose={() => setEditing(undefined)} />
+      )}
     </>
   );
 }

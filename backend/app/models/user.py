@@ -8,7 +8,7 @@ the database itself.
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -24,6 +24,9 @@ class User(Base, TenantScopedModel):
     email: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     first_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # SPEC-BE-113 "my profile": phone and a profile photo (a data URL, <= 1 MB).
+    phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # Live user_status enum: active, invited, disabled, locked. Only 'active' may authenticate.
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="invited")

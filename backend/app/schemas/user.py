@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationInfo, field_validator
 
 from app.schemas.auth import check_password_strength
 
@@ -44,3 +44,24 @@ class UserRead(BaseModel):
     status: str
     last_login_at: datetime | None
     created_at: datetime
+
+
+
+# ---- SPEC-BE-113: my profile ------------------------------------------------
+class MyProfile(BaseModel):
+    id: str
+    email: str
+    first_name: str | None
+    last_name: str | None
+    phone: str | None
+    avatar_url: str | None
+    role: str
+    company_name: str
+    super_admin: bool
+
+
+class MyProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    first_name: str | None = Field(default=None, max_length=100)
+    last_name: str | None = Field(default=None, max_length=100)
+    phone: str | None = Field(default=None, max_length=50)

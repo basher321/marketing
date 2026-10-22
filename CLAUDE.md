@@ -428,10 +428,26 @@ section before trusting any model.
     - **No embeddings API:** Claude (`sk-ant-`) and Groq (`gsk_`) keys leave it off, with a logged reason. Mistral and Cohere need the explicit provider.
   - **Dev fakes:** `dev_fakes` answers every embedding API with word-hash vectors (not semantic).
   - **Eval:** `run_reply_eval.py --compare [--fake-embeddings]` shows keyword-only vs hybrid. A real key is needed to measure the paraphrase and Bengali gains.
+- **Orders, SMS, P&L, business type, unified inbox, branding (2026-10-22): SPEC-BE-107…114 + SPEC-FE-073…078.**
+  Verified on the local DB (222 rolled-back checks, eval 38/38) and by a browser E2E with dev fakes. Additive DDL
+  in `backend/deploy/sql/2026-10-21_orders_sms_expenses.sql` (cPanel `setup.sh` applies every `deploy/sql/*.sql`).
+  - **Orders (BE-107):** `POST /orders` (server totals, cost snapshot per line, Idempotency-Key, number from 1001),
+    `order_service.TRANSITIONS` (+ `awaiting_confirmation`, `returned`), `order_status_events` history, manager+ for
+    cancel-after-confirm / return / refund. Customer stats are recomputed from orders.
+  - **SMS (BE-108):** one Twilio account (`platform_settings` group `twilio`), one number per company
+    (`tenants.settings.sms.number`, set by the Super admin). Signed webhooks `/webhooks/twilio/{inbound,status}`,
+    deduped in `webhook_events`; a reply changes an order only when it is unambiguous. `utils/phone.py` (E.164).
+  - **Customer record (BE-109), P&L + expenses (BE-110, rules in `analytics_service.PL_RULES`), business type
+    (BE-111, `utils/business_types.py`; products by hand, categories, payments).**
+  - **Inbox (BE-112):** `/inbox/*` merges local conversations (WhatsApp Cloud, SMS, stored) with SocialAPI DMs (live).
+    WhatsApp = Embedded Signup + signed `/webhooks/whatsapp`; needs the Super admin's `whatsapp_app` group.
+  - **Branding/health (BE-113):** public `GET /platform/branding`, `/users/me`, `/platform/integrations/{health,errors}`.
+  - **Chat (BE-114):** `orders_awaiting_confirmation`, `update_order_status`, `send_order_confirmation`,
+    `profit_and_loss`, `inspect_conversations`.
 - Structurally stubbed (routes exist, bodies minimal or "not_implemented"):
   `kb/documents` (list/ingest only, no embedding; the model matches the live
-  table since SPEC-BE-071), webhooks (404), the CRM/messaging
-  adapters in `app/integrations/` (`whatsapp.py`, `hubspot.py`, `email.py`:
+  table since SPEC-BE-071), webhooks other than Twilio/WhatsApp (404), the CRM/messaging
+  adapters in `app/integrations/` (`hubspot.py`, `email.py`:
   nothing is sent or synced through them; `verify.py`'s connection tests are
   real), and 4 of the scheduler's job function bodies in `app/workers/tasks/`.
 
@@ -738,8 +754,8 @@ Documented in `frontend/CLAUDE.md`, which is authoritative. In short:
   - `/docs`, `/redoc` and `/openapi.json` are off in production. `/health` checks the database
     (503 when unreachable).
   - `middleware/body_limit.py`: 2 MB per request body (413), with 1 GB on ad media uploads.
-  - `POST /webhooks/{provider}` answers 404 until a provider webhook with signature
-    verification exists.
+  - `POST /webhooks/{provider}` answers 404 except Twilio (SPEC-BE-108) and WhatsApp
+    (SPEC-BE-112), which verify their signatures.
   - The operator checklist (least-privilege DB role, prod `.env`, one scheduler process,
     backups) is at the end of `specs/SPEC-BE-071.md`.
 

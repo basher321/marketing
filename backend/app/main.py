@@ -1,5 +1,6 @@
 """FastAPI app entry point, middleware, router registration."""
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -64,6 +65,31 @@ def health_check() -> JSONResponse:
     except Exception:  # noqa: BLE001 - any failure means the database is unreachable
         return JSONResponse(status_code=503, content={"status": "degraded", "database": "unreachable"})
     return JSONResponse(status_code=200, content={"status": "ok", "database": "ok"})
+
+
+@app.get("/cron/{job_id}", status_code=200)
+def run_cron_job(job_id: str, request: Request) -> JSONResponse:
+    """Runs one scheduler job on demand, for hosts with no long-running process
+    (Vercel Cron calls this with `Authorization: Bearer <CRON_SECRET>`). The job ids
+    and functions are the same as the in-process scheduler's (workers/schedules.py);
+    keep SCHEDULER_ENABLED=false there, or jobs run twice. 404 while CRON_SECRET is
+    empty or for an unknown job, so neither is discoverable."""
+    import asyncio
+    import hmac
+
+    from app.workers.schedules import JOBS
+
+    secret = settings.CRON_SECRET.get_secret_value()
+    given = request.headers.get("authorization", "")
+    job = next((j for j in JOBS if j["id"] == job_id), None)
+    if not secret or job is None:
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+    if not hmac.compare_digest(given.encode(), f"Bearer {secret}".encode()):
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+    result = job["func"]()
+    if asyncio.iscoroutine(result):
+        result = asyncio.run(result)
+    return JSONResponse(status_code=200, content={"job": job_id, "result": jsonable_encoder(result)})
 
 
 def _refuse_superuser_database() -> None:

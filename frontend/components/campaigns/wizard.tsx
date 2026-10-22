@@ -805,8 +805,8 @@ export default function CampaignWizard() {
   const filled = launched || step === 0 ? 0 : step;
   return (
     <>
-      <h1 className="m-0 mb-1 text-[22px] font-bold">{"Campaign Wizard"}</h1>
-      <p className="m-0 mb-5 text-muted">{subtitle}</p>
+      <h1 className="page-title">{"Campaign Wizard"}</h1>
+      <p className="page-subtitle">{subtitle}</p>
       <div className="mb-6 flex gap-1">
         {[0, 1, 2, 3, 4, 5].map((i) => (
           <div key={i} className={`h-1 flex-1 rounded-sm ${i < filled ? "bg-accent" : "bg-border"}`} />

@@ -1,7 +1,7 @@
 """/integrations endpoints (SPEC-BE-017, SPEC-BE-052)."""
 from typing import Any
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ConflictError
@@ -18,7 +18,8 @@ from app.schemas.integration import (
     MetaConnectUrl,
     MetaSelect,
 )
-from app.services import integration_service
+from app.schemas.inbox import WhatsAppCallback, WhatsAppConnectInfo, WhatsAppStatus
+from app.services import inbox_service, integration_service
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
@@ -71,6 +72,36 @@ def meta_select(
         payload.instagram_id,
         payload.pixel_id,
     )
+
+
+# WhatsApp Business via Embedded Signup (SPEC-BE-112), manager+. Declared before /{provider}.
+@router.get("/whatsapp", response_model=WhatsAppStatus, status_code=status.HTTP_200_OK)
+def whatsapp_status(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    return inbox_service.wa_status(db, current_user.tenant_id)
+
+
+@router.get("/whatsapp/connect", response_model=WhatsAppConnectInfo, status_code=status.HTTP_200_OK)
+def whatsapp_connect(
+    db: Session = Depends(get_db), current_user: User = Depends(require_permission("manager"))
+) -> dict[str, Any]:
+    return inbox_service.wa_connect(db, current_user.tenant_id, current_user)
+
+
+@router.post("/whatsapp/callback", response_model=WhatsAppStatus, status_code=status.HTTP_200_OK)
+def whatsapp_callback(
+    payload: WhatsAppCallback, db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("manager")),
+) -> dict[str, Any]:
+    return inbox_service.wa_callback(db, current_user.tenant_id, current_user, payload)
+
+
+@router.delete("/whatsapp/{integration_id}", response_model=None, status_code=status.HTTP_204_NO_CONTENT)
+def whatsapp_disconnect(
+    integration_id: str, db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("manager")),
+) -> Response:
+    inbox_service.wa_disconnect(db, current_user.tenant_id, current_user, integration_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.put("/{provider}", response_model=IntegrationTestResult, status_code=status.HTTP_200_OK)

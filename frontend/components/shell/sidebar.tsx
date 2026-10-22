@@ -5,77 +5,21 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { AppBrandingEffects, isCustomName, useAppBranding } from "@/components/branding/app-branding";
 import { fetchPlatformMe, platformKeys } from "@/lib/api/platform";
 import { fetchTenant, tenantKeys } from "@/lib/api/tenant";
+import { fetchMyProfile, userKeys } from "@/lib/api/users";
+import { fetchWorkflows, workflowKeys } from "@/lib/api/workflows";
 
-// Sidebar (SPEC-FE-002). Sections, labels, routes and icon glyphs are copied
-// from the reference mockup's <aside class="sidebar"> (the glyphs are the
-// literal Unicode characters, not an icon font). Styling reproduces the
-// mockup's .sidebar/.brand/.brand-logo/.nav-section/.nav-item/.nav-icon rules
-// with SPEC-FE-001 tokens plus Tailwind default colors whose values equal the
-// mockup's non-token colors exactly: white = #fff, slate-500 = #64748b,
-// indigo-500 = #6366f1 (sidebar-hover = #1e293b and chart-2 = #06b6d4 are tokens).
-type NavItem = { label: string; href: string; icon: string; children?: { label: string; href: string }[] };
+import { Icon } from "./icons";
+import { forRole, isActive, NAV_SECTIONS, SUPER_ADMIN_SECTION } from "./nav";
+import { usePrefs } from "./prefs";
 
-// Marketing is a group (SPEC-FE-049): Paid Marketing (the former top-level
-// "Campaigns") and Organic Marketing.
-const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
-  {
-    title: "Main",
-    items: [
-      { label: "Dashboard", href: "/dashboard", icon: "◉" },
-      { label: "Command Chat", href: "/chat", icon: "◈" },
-    ],
-  },
-  {
-    title: "Engines",
-    items: [
-      { label: "E-Commerce", href: "/ecommerce", icon: "▤" },
-      {
-        label: "Marketing",
-        href: "/marketing",
-        icon: "◍",
-        children: [
-          { label: "Paid Marketing", href: "/marketing/paid" },
-          { label: "Organic Marketing", href: "/marketing/organic" },
-          { label: "SocialAPI", href: "/marketing/organic/socialapi" }, // SPEC-FE-054
-        ],
-      },
-      { label: "Customer Service", href: "/customer", icon: "◐" },
-    ],
-  },
-  {
-    title: "Configuration",
-    items: [
-      { label: "Knowledge Base", href: "/kb", icon: "▦" },
-      { label: "Workflows", href: "/workflows", icon: "◇" },
-      { label: "Analytics", href: "/analytics", icon: "▨" },
-      { label: "Integrations", href: "/integrations", icon: "◎" },
-      // Organization Settings (SPEC-FE-036); not in the mockup.
-      { label: "Settings", href: "/settings", icon: "⚙" },
-    ],
-  },
-];
-
-// SPEC-FE-068: only PilotSonic's Super admin sees this section (GET /platform/me).
-const SUPER_ADMIN_SECTION: { title: string; items: NavItem[] } = {
-  title: "PilotSonic",
-  items: [{ label: "Super admin", href: "/admin", icon: "★" }],
-};
-
-// SPEC-FE-063: the top bar's ☰ button (a separate client component) opens the
-// drawer through this window event; no shared provider is needed.
-export const TOGGLE_NAV_EVENT = "shell:toggle-nav";
-
-function isActive(pathname: string, href: string): boolean {
-  return pathname === href || pathname.startsWith(`${href}/`);
-}
-
-function itemClass(active: boolean): string {
-  return `flex cursor-pointer items-center gap-[10px] rounded-md px-3 py-[9px] text-[13.5px] transition-[background] duration-150 ${
-    active ? "bg-sidebar-active text-white" : "text-sidebar-text hover:bg-sidebar-hover hover:text-white"
-  }`;
-}
+// Sidebar in the PilotSonic dashboard design: a floating rounded panel with the
+// PilotSonic logo tile, the Main / Engines / Configuration sections, line icons
+// and an accent pill on the active page. "Compact sidebar" (Preferences or the
+// top bar's panel button) collapses it to icons. Below 900px it is hidden and
+// the mobile tab bar takes over (components/shell/mobile-nav.tsx).
 
 // Manually opened groups, remembered per browser. Storage can be unavailable
 // (private mode, blocked site data), so every access is guarded.
@@ -91,38 +35,44 @@ function readOpenGroups(): string[] {
   }
 }
 
+// The design's "Autopilot" card, with the real number of enabled workflows
+// (the same list and rule as the Dashboard's "Active workflows"). There is no
+// global autopilot switch in the backend, so the card links to Workflows
+// instead of showing a toggle.
+function AutopilotCard() {
+  const workflows = useQuery({ queryKey: workflowKeys.list, queryFn: fetchWorkflows });
+  const enabled = workflows.data?.filter((w) => w.status === "Enabled").length ?? 0;
+  const sub = workflows.isPending
+    ? "Loading…"
+    : workflows.isError
+      ? "Couldn't load workflows"
+      : enabled === 0
+        ? "No workflows running"
+        : `${enabled} workflow${enabled === 1 ? "" : "s"} running`;
+  return (
+    <Link href="/workflows" className={`sb-card${enabled === 0 ? " off" : ""}`} title="Autopilot: your enabled workflows">
+      <span className="sb-orb" aria-hidden="true" />
+      <span className="tx">
+        <b>Autopilot</b>
+        <small>{sub}</small>
+      </span>
+    </Link>
+  );
+}
+
 export default function Sidebar() {
   const pathname = usePathname();
-  // The company logo (SPEC-FE-036), when one is uploaded; otherwise the
-  // mockup's "AI" mark. Shares the Settings page's cache key.
+  const prefs = usePrefs();
+  // The company logo (SPEC-FE-036) replaces the PilotSonic mark when uploaded.
   const tenant = useQuery({ queryKey: tenantKeys.me, queryFn: fetchTenant, staleTime: 60_000 });
-  const logo = tenant.data?.branding.logo_url ?? null;
+  // SPEC-FE-077: then the Super admin's app logo, then the built-in mark.
+  const app = useAppBranding();
+  const logo = tenant.data?.branding.logo_url ?? app?.logo_url ?? null;
   const me = useQuery({ queryKey: platformKeys.me, queryFn: fetchPlatformMe, staleTime: 5 * 60_000 });
-  const sections = me.data?.super_admin ? [...NAV_SECTIONS, SUPER_ADMIN_SECTION] : NAV_SECTIONS;
+  const profile = useQuery({ queryKey: userKeys.me, queryFn: fetchMyProfile, staleTime: 5 * 60_000 });
+  const sections = forRole(me.data?.super_admin ? [...NAV_SECTIONS, SUPER_ADMIN_SECTION] : NAV_SECTIONS, profile.data?.role);
   const [openGroups, setOpenGroups] = useState<string[]>([]);
   useEffect(() => setOpenGroups(readOpenGroups()), []);
-  // Below 1024px the sidebar is a drawer (SPEC-FE-063): ☰ opens it; the
-  // backdrop, ✕, Escape or choosing a page closes it.
-  const [drawer, setDrawer] = useState(false);
-  useEffect(() => {
-    const toggle = () => setDrawer((v) => !v);
-    window.addEventListener(TOGGLE_NAV_EVENT, toggle);
-    return () => window.removeEventListener(TOGGLE_NAV_EVENT, toggle);
-  }, []);
-  useEffect(() => setDrawer(false), [pathname]);
-  useEffect(() => {
-    if (!drawer) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setDrawer(false);
-    };
-    window.addEventListener("keydown", onKey);
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = overflow;
-    };
-  }, [drawer]);
   const toggleGroup = (href: string) =>
     setOpenGroups((prev) => {
       const next = prev.includes(href) ? prev.filter((h) => h !== href) : [...prev, href];
@@ -135,106 +85,93 @@ export default function Sidebar() {
     });
 
   return (
-    <>
-      {drawer && (
-        <div
-          className="fixed inset-0 z-40 lg:hidden"
-          style={{ background: "color-mix(in srgb, var(--sidebar-bg) 60%, transparent)" }}
-          onClick={() => setDrawer(false)}
-          aria-hidden="true"
-          data-testid="sidebar-backdrop"
-        />
-      )}
-    {/* From 1024px: pinned to the viewport (the page scrolls, the sidebar stays
-        put; its own list scrolls if taller than the screen). Below: a drawer,
-        invisible to keyboard and screen readers while closed. */}
-    <nav
-      id="app-sidebar"
-      aria-label="Main navigation"
-      className={`fixed inset-y-0 left-0 z-50 flex h-screen w-[260px] flex-col gap-1 overflow-y-auto bg-sidebar-bg px-3 py-5 text-sidebar-text transition-[transform,visibility] duration-200 lg:sticky lg:top-0 lg:z-auto lg:w-auto lg:translate-x-0 lg:self-start ${
-        drawer ? "translate-x-0 shadow-2xl" : "max-lg:invisible max-lg:-translate-x-full"
-      }`}
-    >
-      <div className="mb-3 flex items-center gap-[10px] border-b border-sidebar-hover px-3 pb-5 pt-2 text-base font-bold text-white">
-        {logo ? (
-          // A data: URL, so next/image optimisation doesn't apply.
-
-          <img src={logo} alt={`${tenant.data?.name ?? "Company"} logo`} className="h-7 w-7 rounded-md object-cover" data-testid="sidebar-logo" />
-        ) : (
-          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-gradient-to-br from-indigo-500 to-chart-2 text-sm">
-            AI
-          </div>
-        )}
-        {/* Two-tone like the logo (SPEC-FE-043); sky-400 is the closest default to its blue. */}
-        <div className="flex-1">
-          Pilot<span className="text-sky-400">Sonic</span>
-        </div>
-        <button
-          type="button"
-          aria-label="Close menu"
-          onClick={() => setDrawer(false)}
-          className="rounded px-2 py-1 text-sm font-normal text-sidebar-text hover:bg-sidebar-hover hover:text-white lg:hidden"
-        >
-          ✕
-        </button>
-      </div>
-      {sections.map((section) => (
-        <div key={section.title} className="contents">
-          <div className="px-3 pb-[6px] pt-[14px] text-[11px] uppercase tracking-[.05em] text-slate-500">
-            {section.title}
-          </div>
-          {section.items.map((item) => {
-            if (!item.children) {
-              const active = isActive(pathname, item.href);
-              return (
-                <Link key={item.href} href={item.href} aria-current={active ? "page" : undefined} data-active={active ? "true" : undefined} className={itemClass(active)}>
-                  <span className="w-4 text-center text-sm">{item.icon}</span> {item.label}
-                </Link>
-              );
-            }
-            // A group: the parent is active only on its own page (the overview);
-            // it opens automatically on any route under it, or when toggled.
-            const inGroup = isActive(pathname, item.href);
-            const open = inGroup || openGroups.includes(item.href);
-            const active = pathname === item.href;
-            return (
-              <div key={item.href} className="contents">
-                <div className={`${itemClass(active)} pr-1`} data-active={active ? "true" : undefined}>
-                  <Link href={item.href} aria-current={active ? "page" : undefined} className="flex flex-1 items-center gap-[10px] text-inherit no-underline">
-                    <span className="w-4 text-center text-sm">{item.icon}</span> {item.label}
-                  </Link>
-                  <button
-                    type="button"
-                    aria-label={open ? `Collapse ${item.label}` : `Expand ${item.label}`}
-                    aria-expanded={open}
-                    disabled={inGroup}
-                    onClick={() => toggleGroup(item.href)}
-                    className="rounded px-1.5 text-xs text-inherit disabled:cursor-default"
-                  >
-                    {open ? "▾" : "▸"}
-                  </button>
-                </div>
-                {open &&
-                  item.children.map((child) => {
-                    const childActive = isActive(pathname, child.href);
-                    return (
-                      <Link
-                        key={child.href}
-                        href={child.href}
-                        aria-current={childActive ? "page" : undefined}
-                        data-active={childActive ? "true" : undefined}
-                        className={`${itemClass(childActive)} pl-[38px] text-[13px]`}
-                      >
-                        {child.label}
-                      </Link>
-                    );
-                  })}
+    <aside className="sidebar" aria-label="Main navigation" id="app-sidebar">
+      <div className="sb">
+        <AppBrandingEffects />
+        <Link href="/dashboard" className="brand" aria-label={`${app?.app_name ?? "PilotSonic"} home`}>
+          {logo ? (
+            // A data: URL, so next/image optimisation doesn't apply.
+            <img src={logo} alt={`${tenant.data?.name ?? "Company"} logo`} className="brand-img" data-testid="sidebar-logo" />
+          ) : (
+            <span className="pl-m" role="img" aria-label="PilotSonic logo" />
+          )}
+          <span className="lbl">
+            {isCustomName(app) ? (
+              <span className="font-bold">{app.app_name}</span>
+            ) : (
+              <span className="pl-w" role="img" aria-label="PilotSonic" />
+            )}
+          </span>
+        </Link>
+        <nav className="nav">
+          {sections.map((section) => (
+            <div key={section.title} className="contents">
+              <div className="nav-section">
+                <span className="lbl">{section.title}</span>
               </div>
-            );
-          })}
-        </div>
-      ))}
-    </nav>
-    </>
+              {section.items.map((item) => {
+                if (!item.children) {
+                  const active = isActive(pathname, item.href);
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      title={item.label}
+                      aria-current={active ? "page" : undefined}
+                      data-active={active ? "true" : undefined}
+                      className={`nav-item${active ? " active" : ""}`}
+                    >
+                      <Icon name={item.icon} />
+                      <span className="lbl">{item.label}</span>
+                    </Link>
+                  );
+                }
+                // A group: the parent is active only on its own page (the
+                // overview); it opens on any route under it, or when toggled.
+                const inGroup = isActive(pathname, item.href);
+                const open = !prefs.collapsed && (inGroup || openGroups.includes(item.href));
+                const active = pathname === item.href || (prefs.collapsed && inGroup);
+                return (
+                  <div key={item.href} className="contents">
+                    <div className={`nav-item has-sub${active ? " active" : ""}`} data-active={active ? "true" : undefined}>
+                      <Link href={item.href} title={item.label} aria-current={pathname === item.href ? "page" : undefined} className="nav-link">
+                        <Icon name={item.icon} />
+                        <span className="lbl">{item.label}</span>
+                      </Link>
+                      <button
+                        type="button"
+                        className="nav-caret lbl"
+                        aria-label={open ? `Collapse ${item.label}` : `Expand ${item.label}`}
+                        aria-expanded={open}
+                        disabled={inGroup}
+                        onClick={() => toggleGroup(item.href)}
+                      >
+                        <Icon name="chevron" className={`ic ic-sm${open ? " rot" : ""}`} />
+                      </button>
+                    </div>
+                    {open &&
+                      item.children.map((child) => {
+                        const childActive = isActive(pathname, child.href);
+                        return (
+                          <Link
+                            key={child.href}
+                            href={child.href}
+                            aria-current={childActive ? "page" : undefined}
+                            data-active={childActive ? "true" : undefined}
+                            className={`nav-sub${childActive ? " active" : ""}`}
+                          >
+                            {child.label}
+                          </Link>
+                        );
+                      })}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </nav>
+        <AutopilotCard />
+      </div>
+    </aside>
   );
 }

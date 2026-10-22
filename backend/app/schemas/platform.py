@@ -2,9 +2,11 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-SettingGroup = Literal["socialapi", "zernio", "meta_app", "tiktok_app", "linkedin_app"]
+SettingGroup = Literal[
+    "socialapi", "zernio", "meta_app", "tiktok_app", "linkedin_app", "twilio", "whatsapp_app"
+]
 
 
 class PlatformMe(BaseModel):
@@ -43,7 +45,7 @@ class SettingTest(BaseModel):
 
 
 # ---- Company access to the software's keys (SPEC-BE-103) ----
-AccessGroup = Literal["ai", "socialapi", "zernio", "meta_app", "tiktok_app", "linkedin_app"]
+AccessGroup = Literal["ai", "socialapi", "zernio", "meta_app", "tiktok_app", "linkedin_app", "sms", "whatsapp"]
 
 
 class AccessGroupInfo(BaseModel):
@@ -58,6 +60,8 @@ class CompanyAccess(BaseModel):
     meta_app: bool
     tiktok_app: bool
     linkedin_app: bool
+    sms: bool = True
+    whatsapp: bool = True
 
 
 class CompanyRow(BaseModel):
@@ -85,3 +89,47 @@ class CompanyAccessSave(BaseModel):
     """Only the groups to change: true = may use PilotSonic's key, false = blocked."""
 
     access: dict[AccessGroup, bool] = Field(min_length=1)
+
+
+
+# ---- SPEC-BE-113: app branding and integration health -------------------------
+class AppBranding(BaseModel):
+    app_name: str
+    tagline: str | None
+    logo_url: str | None
+    logo_dark_url: str | None
+    favicon_url: str | None
+
+
+class AppBrandingText(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    app_name: str | None = Field(default=None, min_length=1, max_length=60)
+    tagline: str | None = Field(default=None, max_length=160)
+
+
+class IntegrationHealth(BaseModel):
+    provider: str
+    label: str
+    configured: bool
+    last_ok_at: str | None
+    last_error: str | None
+    companies_connected: int
+    companies_with_errors: int
+
+
+class IntegrationHealthList(BaseModel):
+    items: list[IntegrationHealth]
+
+
+class IntegrationErrorRow(BaseModel):
+    at: datetime
+    provider: str
+    kind: str
+    company_id: str | None
+    company_name: str | None
+    message: str
+
+
+class IntegrationErrorList(BaseModel):
+    items: list[IntegrationErrorRow]
+    next_cursor: str | None

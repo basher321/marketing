@@ -64,11 +64,62 @@ class InspectProductsParams(BaseModel):
     limit: Annotated[int, Field(ge=1, le=50)] = 20
 
 
+OrderStatusLiteral = Literal[
+    "pending", "awaiting_confirmation", "confirmed", "processing", "shipped", "delivered", "returned", "cancelled",
+    "refunded",
+]
+
+
 class InspectOrdersParams(BaseModel):
     model_config = _STRICT
-    status: Literal["pending", "confirmed", "processing", "shipped", "delivered", "cancelled", "refunded"] | None = None
+    status: OrderStatusLiteral | None = None
+    # SPEC-BE-114: the SMS reply position (maps to a status; see order_service.confirmation_state).
+    confirmation: Literal["not_sent", "waiting", "confirmed", "cancelled"] | None = None
     query: Annotated[str, StringConstraints(max_length=100)] | None = None
     limit: Annotated[int, Field(ge=1, le=50)] = 10
+
+
+class OrdersAwaitingParams(BaseModel):
+    model_config = _STRICT
+    older_than_hours: Annotated[int, Field(ge=0, le=720)] | None = None
+    limit: Annotated[int, Field(ge=1, le=50)] = 20
+
+
+class UpdateOrderStatusParams(BaseModel):
+    model_config = _STRICT
+    order: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
+    to: Literal["confirmed", "processing", "shipped", "delivered", "returned", "cancelled", "refunded"]
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] | None = Field(
+        default=None, validate_default=True)
+    tracking_number: Annotated[str, StringConstraints(strip_whitespace=True, max_length=255)] | None = None
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_for_cancel(cls, value: str | None, info: ValidationInfo) -> str | None:
+        # Cancelling or returning needs the user's reason (SPEC-BE-107 FR5): a missing one is a question.
+        if info.data.get("to") in ("cancelled", "returned") and not value:
+            raise ValueError("reason required")
+        return value
+
+
+class OrderRefParams(BaseModel):
+    model_config = _STRICT
+    order: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
+
+
+class ProfitLossParams(BaseModel):
+    model_config = _STRICT
+    range: Literal["7d", "30d", "90d", "mtd", "ytd"] | None = None
+    start_date: dt.date | None = None
+    end_date: dt.date | None = None
+
+
+class InspectConversationsParams(BaseModel):
+    model_config = _STRICT
+    unreplied: bool = False
+    channel: Literal["whatsapp", "sms", "web", "email", "messenger", "instagram", "facebook"] | None = None
+    since: dt.date | None = None
+    limit: Annotated[int, Field(ge=1, le=50)] = 20
 
 
 class InspectInventoryParams(BaseModel):
@@ -547,13 +598,120 @@ def _inspect_products(ctx: ExecContext, p: InspectProductsParams) -> dict[str, A
     return {"summary": f"{len(items)} product(s) match; showing {len(rows)}.", "data": _jsonable(rows)}
 
 
+_CONFIRMATION_STATUS = {"not_sent": "pending", "waiting": "awaiting_confirmation", "cancelled": "cancelled",
+                        "confirmed": "confirmed"}
+
+
 def _inspect_orders(ctx: ExecContext, p: InspectOrdersParams) -> dict[str, Any]:
     from app.services import order_service
 
-    result = order_service.list_orders(ctx.db, ctx.tenant_id, status=p.status, q=p.query, limit=p.limit)
+    status = p.status or (_CONFIRMATION_STATUS[p.confirmation] if p.confirmation else None)
+    result = order_service.list_orders(ctx.db, ctx.tenant_id, status=status, q=p.query, limit=p.limit)
     items = result.get("items", [])
-    keys = ("order_number", "customer_name", "status", "total", "currency", "placed_at")
+    keys = ("order_number", "customer_name", "status", "confirmation_state", "total", "currency", "placed_at")
     return {"summary": f"{result.get('total', len(items))} order(s) match; showing {len(items)}.", "data": _jsonable(_rows(items, keys, p.limit))}
+
+
+def _orders_awaiting(ctx: ExecContext, p: OrdersAwaitingParams) -> dict[str, Any]:
+    from sqlalchemy import text as sql_text
+
+    rows = ctx.db.execute(sql_text(
+        "SELECT o.order_number, o.total_cents, o.currency, o.placed_at, "
+        "nullif(trim(concat_ws(' ', c.first_name, c.last_name)), '') AS name, c.phone, "
+        "(SELECT s.status FROM sms_messages s WHERE s.tenant_id = o.tenant_id AND s.order_id = o.id "
+        " AND s.direction = 'outbound' ORDER BY s.created_at DESC LIMIT 1) AS sms_status, "
+        "round(extract(epoch FROM now() - o.placed_at) / 3600) AS age_h "
+        "FROM orders o LEFT JOIN customers c ON c.id = o.customer_id AND c.tenant_id = o.tenant_id "
+        "WHERE o.tenant_id = :t AND o.status = 'awaiting_confirmation' "
+        "AND (CAST(:h AS int) IS NULL OR o.placed_at <= now() - make_interval(hours => CAST(:h AS int))) "
+        "ORDER BY o.placed_at LIMIT :lim"), {"t": ctx.tenant_id, "h": p.older_than_hours, "lim": p.limit}).all()
+    data = [{"order_number": r.order_number, "customer": r.name or r.phone, "total": float(Decimal(r.total_cents) / 100),
+             "currency": str(r.currency).strip(), "sms_status": r.sms_status or "not sent",
+             "waiting_hours": int(r.age_h or 0)} for r in rows]
+    summary = (f"{len(data)} order(s) are waiting for the customer's confirmation." if data
+               else "No orders are waiting for confirmation.")
+    return {"summary": summary, "data": data, "link": "/orders?status=awaiting_confirmation"}
+
+
+def _actor(ctx: ExecContext) -> Any:
+    from app.models.user import User
+
+    user = ctx.db.get(User, ctx.actor_user_id)
+    if user is None:
+        raise ValueError("The requesting user no longer exists.")
+    user.role = ctx.actor_role
+    return user
+
+
+def _update_order_status(ctx: ExecContext, p: UpdateOrderStatusParams) -> dict[str, Any]:
+    from app.services import order_service
+
+    order = order_service.get_by_number(ctx.db, ctx.tenant_id, p.order)
+    order_service.change_status(ctx.db, ctx.tenant_id, str(order.id), p.to, actor=_actor(ctx), reason=p.reason,
+                                tracking_number=p.tracking_number)
+    return {"summary": f"Order #{order.order_number} is now {p.to}.", "order_id": str(order.id),
+            "link": f"/orders/{order.id}"}
+
+
+def _send_order_confirmation(ctx: ExecContext, p: OrderRefParams) -> dict[str, Any]:
+    from app.services import order_service, sms_service
+
+    order = order_service.get_by_number(ctx.db, ctx.tenant_id, p.order)
+    out = sms_service.send_confirmation(ctx.db, ctx.tenant_id, str(order.id), _actor(ctx))
+    return {"summary": f"Confirmation SMS sent for order #{order.order_number} ({out['status']}).",
+            "order_id": str(order.id), "link": f"/orders/{order.id}"}
+
+
+def _profit_and_loss(ctx: ExecContext, p: ProfitLossParams) -> dict[str, Any]:
+    from app.services import analytics_service
+    from app.utils.locale_data import format_money
+
+    r = analytics_service.get_profit_loss(ctx.db, ctx.tenant_id, p.range if not (p.start_date or p.end_date) else None,
+                                          p.start_date, p.end_date)
+    cur = r["currency"]
+
+    def money(v: float) -> str:
+        return format_money(int(round(v * 100)), cur)
+
+    word = "profit" if r["profit"] >= 0 else "loss"
+    parts = [f"{r['period']['from']} to {r['period']['to']}: sales {money(r['revenue']['net'])}, "
+             f"costs {money(r['costs']['total'])}, {word} {money(abs(r['profit']))}."]
+    if r["missing_cost"]["lines"]:
+        parts.append(f"{r['missing_cost']['lines']} order line(s) have no product cost, so profit is overstated.")
+    if r["costs"]["ad_spend"]["unavailable"]:
+        parts.append("Zernio ad spend isn't included (not imported).")
+    return {"summary": " ".join(parts), "link": "/analytics?tab=profit-loss",
+            "data": [{"sales": r["revenue"]["sales"], "shipping_charged": r["revenue"]["shipping_charged"],
+                      "product_cost": r["costs"]["product"], "ad_spend": r["costs"]["ad_spend"]["total"],
+                      "other_costs": round(r["costs"]["shipping"] + r["costs"]["operating"] + r["costs"]["other"], 2),
+                      "profit": r["profit"], "complete": r["complete"], "currency": cur}]}
+
+
+def _inspect_conversations(ctx: ExecContext, p: InspectConversationsParams) -> dict[str, Any]:
+    from sqlalchemy import text as sql_text
+
+    rows = ctx.db.execute(sql_text(
+        "SELECT c.id, c.channel::text AS channel, c.topic, "
+        "nullif(trim(concat_ws(' ', cu.first_name, cu.last_name)), '') AS name, cu.phone, "
+        "m.body, m.direction::text AS direction, m.created_at "
+        "FROM conversations c LEFT JOIN customers cu ON cu.id = c.customer_id AND cu.tenant_id = c.tenant_id "
+        "JOIN LATERAL (SELECT body, direction, created_at FROM messages WHERE conversation_id = c.id "
+        "  AND NOT (sender_type = 'ai' AND approved_by IS NULL AND sent_at IS NULL) "
+        "  ORDER BY created_at DESC LIMIT 1) m ON true "
+        "WHERE c.tenant_id = :t AND c.status IN ('open', 'pending') "
+        "AND (CAST(:ch AS text) IS NULL OR c.channel::text = :ch) "
+        "AND (CAST(:since AS date) IS NULL OR m.created_at >= CAST(:since AS date)) "
+        "AND (NOT :unreplied OR m.direction = 'inbound') "
+        "ORDER BY m.created_at DESC LIMIT :lim"),
+        {"t": ctx.tenant_id, "ch": p.channel, "since": p.since, "unreplied": p.unreplied, "lim": p.limit}).all()
+    data = [{"customer": r.name or r.phone or "Unknown", "channel": r.channel, "last_message": (r.body or "")[:120],
+             "from": "customer" if r.direction == "inbound" else "us", "at": r.created_at.isoformat(),
+             "link": f"/chat?tab=inbox&conv=local:{r.id}"} for r in rows]
+    what = "waiting for a reply" if p.unreplied else "open"
+    summary = f"{len(data)} conversation(s) {what}." if data else f"No conversations {what}."
+    if p.unreplied:
+        summary += " (Messenger/Instagram threads in SocialAPI are listed in the Inbox tab.)"
+    return {"summary": summary, "data": data, "link": "/chat?tab=inbox"}
 
 
 def _inspect_inventory(ctx: ExecContext, p: InspectInventoryParams) -> dict[str, Any]:
@@ -1319,6 +1477,12 @@ for _a in (
     # E-Commerce
     CommandAction("inspect_products", "Show products", "ecommerce", "read", InspectProductsParams, _inspect_products, "List/search products, stock and low-stock flags.", min_role="viewer"),
     CommandAction("inspect_orders", "Show orders", "ecommerce", "read", InspectOrdersParams, _inspect_orders, "List recent orders, optionally by status or search text.", min_role="viewer"),
+    # SPEC-BE-114: orders, profit and customers waiting for a reply.
+    CommandAction("orders_awaiting_confirmation", "Orders awaiting confirmation", "ecommerce", "read", OrdersAwaitingParams, _orders_awaiting, "Orders whose customer hasn't confirmed by SMS yet, with SMS status and age.", min_role="viewer"),
+    CommandAction("update_order_status", "Change order status", "ecommerce", "change", UpdateOrderStatusParams, _update_order_status, "Move one order (by its number) to confirmed/processing/shipped/delivered/returned/cancelled/refunded; cancelled and returned need the user's reason."),
+    CommandAction("send_order_confirmation", "Send confirmation SMS", "ecommerce", "change", OrderRefParams, _send_order_confirmation, "Send (or follow up) the order confirmation SMS for one order number."),
+    CommandAction("profit_and_loss", "Sales and profit", "general", "read", ProfitLossParams, _profit_and_loss, "Sales, costs and profit or loss for a range (7d/30d/90d/mtd = this month/ytd) or start_date..end_date.", min_role="viewer"),
+    CommandAction("inspect_conversations", "Customer conversations", "general", "read", InspectConversationsParams, _inspect_conversations, "Open customer conversations; unreplied=true = the customer wrote last (no reply yet).", min_role="viewer"),
     CommandAction("inspect_inventory", "Show inventory", "ecommerce", "read", InspectInventoryParams, _inspect_inventory, "Inventory rows; low-stock only by default.", min_role="viewer"),
     CommandAction("adjust_inventory", "Adjust stock", "ecommerce", "change", AdjustInventoryParams, _adjust_inventory, "Set the on-hand count of one SKU."),
     CommandAction("create_pricing_rule", "Create pricing rule", "ecommerce", "change", PricingRuleParams, _create_pricing_rule, "Discount or fixed price for SKUs or all products, optional dates.", aliases=("adjust_pricing",)),
@@ -1442,6 +1606,8 @@ FIELD_QUESTIONS: dict[str, str] = {
     "media_ids": "Which product photos should I use?",
     "threshold": "At what order amount should shipping become free?",
     "zone_id": "Which shipping zone?",
+    "reason": "Why is the order being cancelled or returned?",
+    "order": "Which order number?",
     "rate_id": "Which shipping method?",
     "rate": "What should the shipping price be?",
     "country_codes": "Which countries does this zone cover (two-letter codes, e.g. BD)?",

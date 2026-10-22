@@ -57,9 +57,20 @@ FIELDS: dict[str, dict[str, tuple[str, str | None, bool]]] = {
         "client_id": ("LinkedIn client ID", "LINKEDIN_CLIENT_ID", False),
         "client_secret": ("LinkedIn client secret", "LINKEDIN_CLIENT_SECRET", True),
     },
+    # SPEC-BE-108: one Twilio account; numbers are assigned per company.
+    "twilio": {
+        "account_sid": ("Twilio account SID", None, False),
+        "auth_token": ("Twilio auth token", None, True),
+    },
+    # SPEC-BE-112: WhatsApp Cloud API through the Meta app above (Embedded Signup).
+    "whatsapp_app": {
+        "config_id": ("WhatsApp Embedded Signup configuration ID", None, False),
+        "verify_token": ("Webhook verify token", None, True),
+    },
 }
 GROUP_LABEL = {"socialapi": "SocialAPI", "zernio": "Zernio", "meta_app": "Meta (Facebook / Instagram) app",
-               "tiktok_app": "TikTok app", "linkedin_app": "LinkedIn app"}
+               "tiktok_app": "TikTok app", "linkedin_app": "LinkedIn app", "twilio": "Twilio (SMS)",
+               "whatsapp_app": "WhatsApp Business (Cloud API)"}
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +229,8 @@ ACCESS_GROUPS: dict[str, str] = {
     "meta_app": "Meta (Facebook / Instagram) app",
     "tiktok_app": "TikTok app",
     "linkedin_app": "LinkedIn app",
+    "sms": "SMS (Twilio)",
+    "whatsapp": "WhatsApp Business",
 }
 BLOCKED: dict[str, str] = {
     "ai": "PilotSonic hasn't enabled AI for your company. Contact PilotSonic support.",
@@ -226,6 +239,8 @@ BLOCKED: dict[str, str] = {
     "meta_app": "PilotSonic hasn't enabled Facebook / Instagram sign-in for your company. Contact PilotSonic support.",
     "tiktok_app": "PilotSonic hasn't enabled TikTok sign-in for your company. Contact PilotSonic support.",
     "linkedin_app": "PilotSonic hasn't enabled LinkedIn sign-in for your company. Contact PilotSonic support.",
+    "sms": "PilotSonic hasn't enabled SMS for your company. Contact PilotSonic support.",
+    "whatsapp": "PilotSonic hasn't enabled WhatsApp for your company. Contact PilotSonic support.",
 }
 
 
@@ -313,3 +328,131 @@ def record(db: Session, group: str, error: str | None) -> None:
         stored["last_ok_at"] = datetime.now(timezone.utc).isoformat()
     put(db, group, stored, None)
     db.commit()
+
+
+
+# ---------------------------------------------------------------------------
+# App branding (SPEC-BE-113): the software's own name and logo, set by the Super
+# admin, readable by anyone (the login page shows it). Images are data URLs.
+# ---------------------------------------------------------------------------
+BRANDING_KEY = "app_branding"
+DEFAULT_APP_NAME = "PilotSonic"
+BRANDING_SLOTS = ("logo", "logo_dark", "favicon")
+
+
+def app_branding(db: Session | None = None) -> dict[str, Any]:
+    stored = get(BRANDING_KEY, db)
+    return {
+        "app_name": str(stored.get("app_name") or DEFAULT_APP_NAME),
+        "tagline": stored.get("tagline") or None,
+        "logo_url": stored.get("logo") or None,
+        "logo_dark_url": stored.get("logo_dark") or None,
+        "favicon_url": stored.get("favicon") or None,
+    }
+
+
+def set_app_branding(db: Session, changes: dict[str, Any], actor_tenant_id: str, actor_user_id: str) -> dict[str, Any]:
+    stored = get(BRANDING_KEY, db)
+    for key, value in changes.items():
+        if value is None or (isinstance(value, str) and not value.strip()):
+            stored.pop(key, None)
+        else:
+            stored[key] = value.strip() if isinstance(value, str) else value
+    put(db, BRANDING_KEY, stored, actor_user_id)
+    audit(db, actor_tenant_id, actor_user_id, "app_branding_saved", fields=sorted(changes))
+    clear_cache()
+    return app_branding(db)
+
+
+def set_app_branding_image(db: Session, slot: str, data: bytes, actor_tenant_id: str,
+                           actor_user_id: str) -> dict[str, Any]:
+    import base64
+
+    from app.services.tenant_service import MAX_IMAGE_BYTES, _image_mime
+
+    if not data:
+        raise AppError("The file is empty.", 422)
+    if len(data) > MAX_IMAGE_BYTES:
+        raise AppError("The image must be 1 MB or smaller.", 422)
+    mime = _image_mime(data)
+    if mime is None:
+        raise AppError("Only PNG, JPEG or WebP images are allowed.", 422)
+    url = f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+    return set_app_branding(db, {slot: url}, actor_tenant_id, actor_user_id)
+
+
+# ---------------------------------------------------------------------------
+# Integration health and errors (SPEC-BE-113 FR3). Counts and messages only,
+# never a credential.
+# ---------------------------------------------------------------------------
+HEALTH_REQUIRED: dict[str, tuple[str, ...]] = {
+    "meta_app": ("app_id", "app_secret"), "tiktok_app": ("client_key", "client_secret"),
+    "linkedin_app": ("client_id", "client_secret"), "socialapi": ("api_key",), "zernio": ("api_key",),
+    "twilio": ("account_sid", "auth_token"), "whatsapp_app": ("config_id", "verify_token"),
+}
+_HEALTH_PROVIDERS: dict[str, tuple[str, ...]] = {
+    "meta_app": ("meta_ads", "facebook", "instagram"), "tiktok_app": ("tiktok", "tiktok_ads"),
+    "linkedin_app": ("linkedin", "linkedin_ads"), "whatsapp_app": ("whatsapp",),
+}
+
+
+def integration_health(db: Session) -> list[dict[str, Any]]:
+    out = []
+    for group, required in HEALTH_REQUIRED.items():
+        stored = get(group, db)
+        configured = all(value(group, f, db) for f in required)
+        if group in _HEALTH_PROVIDERS:
+            row = db.execute(text(
+                "SELECT count(DISTINCT tenant_id) FILTER (WHERE status = 'connected'), "
+                "count(DISTINCT tenant_id) FILTER (WHERE status IN ('error', 'expired') OR last_error IS NOT NULL) "
+                "FROM integrations WHERE provider::text = ANY(:p)"), {"p": list(_HEALTH_PROVIDERS[group])}).one()
+            connected, errors = int(row[0]), int(row[1])
+        elif group == "socialapi":
+            row = db.execute(text(
+                "SELECT count(*) FILTER (WHERE settings->'socialapi'->>'brand_id' IS NOT NULL), "
+                "count(*) FILTER (WHERE settings->'socialapi'->>'last_error' IS NOT NULL) FROM tenants")).one()
+            connected, errors = int(row[0]), int(row[1])
+        elif group == "zernio":
+            connected = int(db.execute(text(
+                "SELECT count(*) FROM tenants WHERE settings->'zernio'->>'profile_id' IS NOT NULL")).scalar() or 0)
+            errors = 0
+        else:  # twilio
+            connected = int(db.execute(text(
+                "SELECT count(*) FROM tenants WHERE settings->'sms'->>'number' IS NOT NULL")).scalar() or 0)
+            errors = int(db.execute(text(
+                "SELECT count(DISTINCT tenant_id) FROM sms_messages WHERE status IN ('failed', 'undelivered') "
+                "AND created_at > now() - interval '7 days'")).scalar() or 0)
+        out.append({"provider": group, "label": GROUP_LABEL[group], "configured": configured,
+                    "last_ok_at": stored.get("last_ok_at"), "last_error": stored.get("last_error"),
+                    "companies_connected": connected, "companies_with_errors": errors})
+    return out
+
+
+_ERRORS_SQL = """
+  SELECT * FROM (
+    SELECT i.updated_at AS at, i.provider::text AS provider, 'connection' AS kind, i.tenant_id, t.name,
+           i.last_error AS message
+      FROM integrations i JOIN tenants t ON t.id = i.tenant_id WHERE i.last_error IS NOT NULL
+    UNION ALL
+    SELECT w.received_at, w.provider::text, CASE WHEN w.signature_valid = false THEN 'invalid_signature'
+           ELSE 'webhook' END, w.tenant_id, t.name,
+           coalesce(w.processing_error, 'A webhook arrived with an invalid signature and was refused.')
+      FROM webhook_events w LEFT JOIN tenants t ON t.id = w.tenant_id
+     WHERE w.signature_valid = false OR w.processing_error IS NOT NULL
+    UNION ALL
+    SELECT s.updated_at, 'twilio', 'sms_failed', s.tenant_id, t.name,
+           coalesce(s.error_message, 'SMS ' || s.status)
+      FROM sms_messages s JOIN tenants t ON t.id = s.tenant_id WHERE s.status IN ('failed', 'undelivered')
+  ) e
+  WHERE (CAST(:p AS text) IS NULL OR e.provider = :p OR (:p = 'meta_app' AND e.provider IN ('meta_ads', 'facebook', 'instagram'))
+         OR (:p = 'whatsapp_app' AND e.provider = 'whatsapp'))
+  ORDER BY e.at DESC LIMIT :lim OFFSET :off
+"""
+
+
+def integration_errors(db: Session, provider: str | None, offset: int, limit: int = 50) -> dict[str, Any]:
+    rows = db.execute(text(_ERRORS_SQL), {"p": provider, "lim": limit + 1, "off": offset}).all()
+    items = [{"at": r.at.astimezone(timezone.utc), "provider": r.provider, "kind": r.kind,
+              "company_id": str(r.tenant_id) if r.tenant_id else None, "company_name": r.name,
+              "message": str(r.message)[:500]} for r in rows[:limit]]
+    return {"items": items, "next_cursor": str(offset + limit) if len(rows) > limit else None}

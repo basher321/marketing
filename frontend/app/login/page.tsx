@@ -58,10 +58,11 @@ export default function LoginPage() {
       }
     >
       {success ? (
-        <NeuSuccess subtitle="Login Successfully" />
+        <NeuSuccess title="Welcome back" subtitle="Opening your dashboard" />
       ) : (
         <>
-          <h1 className="neu-title">Login</h1>
+          <h1 className="neu-title">Welcome back</h1>
+          <p className="neu-sub">Sign in to your PilotSonic workspace. New here? Create a workspace in a minute.</p>
           {/* method="post": a submit before hydration must never put the password in the URL. */}
           <form method="post" onSubmit={onSubmit} className="neu-form">
             <NeuField label="Workspace" htmlFor="tenant_slug">
@@ -108,7 +109,7 @@ export default function LoginPage() {
               </p>
             )}
             <button type="submit" className="neu-btn" disabled={submitting}>
-              {submitting ? "Signing in…" : "Sign In"}
+              {submitting ? "Signing in…" : "Sign in"}
             </button>
           </form>
         </>

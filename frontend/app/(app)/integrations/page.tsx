@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import AIModels from "@/components/integrations/ai-models";
 import IntegrationsGrid from "@/components/integrations/integrations-grid";
+import MessagingChannels from "@/components/integrations/messaging-channels";
 import { KeyCard } from "@/components/socialapi/publishing";
 
 // Title and subtitle copied from the reference mockup (SPEC-FE-002). SPEC-FE-068:
@@ -10,8 +11,8 @@ import { KeyCard } from "@/components/socialapi/publishing";
 export default function IntegrationsPage() {
   return (
     <>
-      <h1 className="m-0 mb-1 text-[22px] font-bold">{"Integrations"}</h1>
-      <p className="m-0 mb-5 text-muted">{"Connect the platforms your business runs on."}</p>
+      <h1 className="page-title">{"Integrations"}</h1>
+      <p className="page-subtitle">{"Connect the platforms your business runs on."}</p>
       <AIModels />
       <div id="socialapi" className="mt-4">
         <KeyCard />
@@ -26,6 +27,7 @@ export default function IntegrationsPage() {
           </Link>
         </p>
       </div>
+      <MessagingChannels />
       <IntegrationsGrid />
     </>
   );

@@ -51,8 +51,8 @@ function MetaNewCampaign() {
   return (
     <form onSubmit={submit} className="mx-auto max-w-[760px]">
       {BACK}
-      <h1 className="m-0 mb-1 text-[22px] font-bold">Create new campaign</h1>
-      <p className="m-0 mb-5 text-muted">Choose a campaign objective.</p>
+      <h1 className="page-title">Create new campaign</h1>
+      <p className="page-subtitle">Choose a campaign objective.</p>
       {objectives.isError && <p className="text-[13px] text-danger">{objectives.error.message}</p>}
       <div className="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="Campaign objective">
         {(objectives.data?.objectives ?? []).map((o) => (
@@ -155,8 +155,8 @@ function PlatformNewCampaign({ platform }: { platform: string }) {
   return (
     <form onSubmit={submit} className="mx-auto max-w-[760px]">
       {BACK}
-      <h1 className="m-0 mb-1 text-[22px] font-bold">Create new {p.label} campaign</h1>
-      <p className="m-0 mb-5 text-muted">
+      <h1 className="page-title">Create new {p.label} campaign</h1>
+      <p className="page-subtitle">
         Runs on {p.runs_on}. {p.connected ? `Connected: ${p.account_name ?? p.label}.` : p.connect_hint}
       </p>
       <h2 className="m-0 mb-2 text-[15px] font-semibold">Objective</h2>

@@ -110,6 +110,11 @@ class Settings(BaseSettings):
     SCHEDULER_TIMEZONE: str = Field(
         default="UTC", description="Timezone the APScheduler instance evaluates job triggers in."
     )
+    CRON_SECRET: SecretStr = Field(
+        default=SecretStr(""),
+        description="Bearer secret for GET /cron/{job_id} (Vercel Cron, where no in-process scheduler runs). "
+        "Empty = the cron endpoint is off (404).",
+    )
 
     # --- LLM/AI ---
     LLM_PROVIDER: str = Field(default="mock", description="LLM provider selector: anthropic, openai, or mock.")

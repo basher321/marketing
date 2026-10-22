@@ -50,6 +50,8 @@ python-dateutil==2.9.0.post0
 pytz==2024.2
 # IANA zone database for zoneinfo; required on Windows, which has none built in.
 tzdata==2026.4
+# Phone numbers to E.164 for order confirmation SMS (SPEC-BE-108).
+phonenumbers==9.0.41
 # CLDR countries, currencies (names, symbols, decimals) and languages.
 babel==2.18.0
 

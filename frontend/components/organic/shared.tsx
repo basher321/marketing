@@ -34,8 +34,8 @@ export function OrganicHeader({ title, subtitle, action }: { title: string; subt
           <Link href="/marketing" className="text-xs text-muted underline">
             ← Marketing
           </Link>
-          <h1 className="m-0 mb-1 text-[22px] font-bold">{title}</h1>
-          <p className="m-0 text-muted">{subtitle}</p>
+          <h1 className="page-title">{title}</h1>
+          <p className="page-subtitle mb-0">{subtitle}</p>
         </div>
         {action}
       </div>

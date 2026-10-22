@@ -212,9 +212,11 @@ RESET_TABLES = (
     "orchestrator_messages",
     "orchestrator_chats",  # SPEC-BE-099 chat history
     "orchestrator_projects",
+    "sms_messages",  # SPEC-BE-108 (points at orders, customers, conversations)
     "messages",
     "conversations",
     "abandoned_carts",
+    "order_status_events",  # SPEC-BE-107
     "order_items",
     "orders",
     "inventory_movements",
@@ -235,6 +237,7 @@ RESET_TABLES = (
     "analytics_events",
     "analytics_daily_rollups",
     "webhook_events",
+    "expenses",  # SPEC-BE-110
 )
 
 

@@ -3,25 +3,32 @@
 Order maps the live `orders` columns needed by SPEC-BE-006 (order counts),
 SPEC-BE-015 (sales analytics) and SPEC-BE-041 (orders list): order_number,
 channel, status, total_cents, currency, payment_method, payment_status,
-tracking_number, placed_at. Columns not needed yet stay unmapped. OrderItem
-follows the live `order_items` columns (SPEC-BE-016, top products).
+tracking_number, placed_at. SPEC-BE-107 maps the totals, addresses, notes,
+tags, metadata and lifecycle timestamps it writes. OrderItem follows the live
+`order_items` columns (SPEC-BE-016, top products). OrderStatusEvent is the
+SPEC-BE-107 `order_status_events` table (status history).
 """
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, Integer, String, func
-from sqlalchemy.dialects.postgresql import JSONB
+from typing import Any
+
+from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.models.base import TenantScopedMixin, TenantScopedModel, UUIDPrimaryKeyMixin
 from app.models.product import CHANNEL_TYPES
 
+# awaiting_confirmation and returned were added by SPEC-BE-107's DDL.
 ORDER_STATUSES = (
     "pending",
+    "awaiting_confirmation",
     "confirmed",
     "processing",
     "shipped",
     "delivered",
+    "returned",
     "cancelled",
     "refunded",
 )
@@ -40,11 +47,23 @@ class Order(Base, TenantScopedModel):
         default="pending",
         nullable=False,
     )
+    subtotal_cents: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    discount_cents: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    shipping_cents: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    tax_cents: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     total_cents: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), default="USD", nullable=False)
     payment_method: Mapped[str | None] = mapped_column(String(50), nullable=True)
     payment_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
     tracking_number: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    tracking_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    shipping_address: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tags: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, nullable=False)
+    extra_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict, nullable=False)
+    fulfilled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     placed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -75,3 +94,22 @@ class OrderItem(Base, UUIDPrimaryKeyMixin, TenantScopedMixin):
     )
 
     order: Mapped["Order"] = relationship(back_populates="items")
+
+
+class OrderStatusEvent(Base, UUIDPrimaryKeyMixin, TenantScopedMixin):
+    # SPEC-BE-107 status history. from_status is null for the "placed" event.
+    # actor_type: user, system, customer_sms (a Twilio reply, SPEC-BE-108), store_sync.
+    __tablename__ = "order_status_events"
+
+    order_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("orders.id", ondelete="CASCADE"), nullable=False
+    )
+    from_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    to_status: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_type: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extra_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

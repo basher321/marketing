@@ -1,16 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import AdsReport from "@/components/analytics/ads-report";
 import EngagementReport from "@/components/analytics/engagement-report";
+import ProfitLoss from "@/components/analytics/profit-loss";
 import RevenueChart from "@/components/analytics/revenue-chart";
 import SalesSummaryCards from "@/components/analytics/sales-summary";
 import ServiceReport from "@/components/analytics/service-report";
 import TopProductsTable from "@/components/analytics/top-products-table";
 import type { RangeKey } from "@/lib/types/analytics";
 
-const TABS = ["Sales", "Ads", "Engagement", "Customer Service"] as const;
+// SPEC-FE-074 adds Profit & Loss first (?tab=profit-loss links open it).
+const TABS = ["Profit & Loss", "Sales", "Ads", "Engagement", "Customer Service"] as const;
 type Tab = (typeof TABS)[number];
 
 const RANGES: { key: RangeKey; label: string }[] = [
@@ -25,13 +27,18 @@ const RANGES: { key: RangeKey; label: string }[] = [
 // (SPEC-FE-035) have no mockup markup; they share one range selector
 // (default 30 days). The Sales tab keeps its fixed 7-day view.
 export default function AnalyticsPage() {
-  const [tab, setTab] = useState<Tab>("Sales");
+  const [tab, setTab] = useState<Tab>("Profit & Loss");
   const [range, setRange] = useState<RangeKey>("30d");
+  useEffect(() => {
+    const wanted = new URLSearchParams(window.location.search).get("tab");
+    const match = TABS.find((t) => t.toLowerCase().replace(/ & | /g, "-") === wanted);
+    if (match) setTab(match);
+  }, []);
 
   return (
     <>
-      <h1 className="m-0 mb-1 text-[22px] font-bold">{"Analytics"}</h1>
-      <p className="m-0 mb-5 text-muted">
+      <h1 className="page-title">{"Analytics"}</h1>
+      <p className="page-subtitle">
         {"Real-time performance across sales, ads, engagement, and service."}
       </p>
       <div className="tabs" role="tablist">
@@ -51,7 +58,7 @@ export default function AnalyticsPage() {
           </div>
         ))}
       </div>
-      {tab !== "Sales" && (
+      {tab !== "Sales" && tab !== "Profit & Loss" && (
         <div className="mb-4 flex items-center gap-1.5" role="group" aria-label="Date range">
           <span className="mr-1 text-[13px] text-muted">Range:</span>
           {RANGES.map((r) => (
@@ -67,6 +74,7 @@ export default function AnalyticsPage() {
           ))}
         </div>
       )}
+      {tab === "Profit & Loss" && <ProfitLoss />}
       {tab === "Sales" && (
         <>
           <SalesSummaryCards />

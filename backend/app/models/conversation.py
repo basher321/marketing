@@ -3,8 +3,8 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Numeric, String
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -30,6 +30,11 @@ class Conversation(Base, TenantScopedModel):
     # Inbox columns (SPEC-BE-007): the Topic cell, and the jsonb where the
     # handoff marker (handed_off_at / handed_off_by) is recorded.
     topic: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Unified inbox (SPEC-BE-112): the provider's thread id (a WhatsApp/SMS phone),
+    # tags, and when the customer last wrote (WhatsApp's 24-hour window).
+    external_thread_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    tags: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, nullable=False)
+    last_customer_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     extra_metadata: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, default=dict, nullable=False
     )
@@ -67,6 +72,13 @@ class Message(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     ai_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
     ai_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     ai_draft_of_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # Unified inbox (SPEC-BE-112): provider message id, delivery/read times,
+    # attachments ([{media_id, kind, url?, name?}]) and the sending user.
+    external_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attachments: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, nullable=False)
+    sender_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     extra_metadata: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, default=dict, nullable=False
     )

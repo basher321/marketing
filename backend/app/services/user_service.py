@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.audit import write_audit_log
-from app.core.exceptions import ConflictError, NotFoundError
+from app.core.exceptions import AppError, ConflictError, NotFoundError
 from app.core.security import hash_password
 from app.models.user import Role, User, UserRole
 from app.schemas.user import UserCreate, UserUpdate
@@ -296,3 +296,50 @@ def delete_user(db: Session, tenant_id: str, actor_user_id: str, user_id: str) -
         resource_id=uid,
     )
     logger.info("user.deleted", tenant_id=tenant_id, user_id=uid)
+
+
+
+# ---- SPEC-BE-113: my profile (every role, the caller only) -------------------
+def my_profile(db: Session, user: User) -> dict[str, Any]:
+    from app.models.tenant import Tenant
+    from app.services import platform_service
+
+    tenant = db.get(Tenant, user.tenant_id)
+    return {
+        "id": str(user.id), "email": user.email, "first_name": user.first_name, "last_name": user.last_name,
+        "phone": user.phone, "avatar_url": user.avatar_url, "role": user.role,
+        "company_name": tenant.name if tenant else "", "super_admin": platform_service.is_super_admin(db, str(user.id)),
+    }
+
+
+def update_my_profile(db: Session, user: User, changes: dict[str, Any]) -> dict[str, Any]:
+    row = _get_user_row(db, str(user.tenant_id), str(user.id))
+    for field, value in changes.items():
+        setattr(row, field, (value or "").strip() or None)
+    write_audit_log(db, tenant_id=str(user.tenant_id), actor_user_id=str(user.id), action="user.profile_updated",
+                    resource_type="user", resource_id=str(user.id), metadata={"fields": sorted(changes)})
+    row.role = user.role
+    return my_profile(db, row)
+
+
+def set_my_avatar(db: Session, user: User, data: bytes | None) -> dict[str, Any]:
+    import base64
+
+    from app.services.tenant_service import MAX_IMAGE_BYTES, _image_mime
+
+    row = _get_user_row(db, str(user.tenant_id), str(user.id))
+    if data is None:
+        row.avatar_url = None
+    else:
+        if not data:
+            raise AppError("The file is empty.", 422)
+        if len(data) > MAX_IMAGE_BYTES:
+            raise AppError("The image must be 1 MB or smaller.", 422)
+        mime = _image_mime(data)
+        if mime is None:
+            raise AppError("Only PNG, JPEG or WebP images are allowed.", 422)
+        row.avatar_url = f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+    write_audit_log(db, tenant_id=str(user.tenant_id), actor_user_id=str(user.id), action="user.avatar_updated",
+                    resource_type="user", resource_id=str(user.id), metadata={"removed": data is None})
+    row.role = user.role
+    return my_profile(db, row)

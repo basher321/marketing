@@ -18,7 +18,8 @@ from app.schemas.tenant import (
     TenantResetResult,
     TenantUpdate,
 )
-from app.services import tenant_service
+from app.schemas.sms import SmsSettingsRead, SmsSettingsSave
+from app.services import sms_service, tenant_service
 from app.services.tenant_service import MAX_IMAGE_BYTES, BrandingSlot
 from app.utils import locale_data
 
@@ -93,3 +94,18 @@ def reset_company_data(
     return tenant_service.reset_company_data(
         db, str(current_user.tenant_id), current_user, payload.confirm_slug, payload.password
     )
+
+
+# ---- SPEC-BE-108: order confirmation SMS settings ---------------------------
+@router.get("/me/sms", response_model=SmsSettingsRead, status_code=status.HTTP_200_OK)
+def get_sms_settings(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    return sms_service.get_settings_view(db, current_user.tenant_id)
+
+
+@router.put("/me/sms", response_model=SmsSettingsRead, status_code=status.HTTP_200_OK)
+def save_sms_settings(
+    payload: SmsSettingsSave,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("manager")),
+) -> dict[str, Any]:
+    return sms_service.save_settings(db, current_user.tenant_id, current_user, payload)

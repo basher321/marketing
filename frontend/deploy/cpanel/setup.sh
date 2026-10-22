@@ -13,7 +13,12 @@ cloudlinux-selector create --json --interpreter nodejs --version "$NODEV" --app-
   --domain pilotsonic.com --app-uri / --app-mode production --startup-file app.js \
   || echo "(app already exists, continuing)"
 cp /tmp/pilotsonic_app.js "$HOME/$APP/app.js"
-cloudlinux-selector restart --json --interpreter nodejs --app-root "$APP"
+# A plain restart can leave the old Node process serving the old build: stop, end any
+# leftover process of this app, then start.
+cloudlinux-selector stop --json --interpreter nodejs --app-root "$APP" || true
+pkill -u "$(id -un)" -f "$HOME/$APP/app.js" || true
+sleep 3
+cloudlinux-selector start --json --interpreter nodejs --app-root "$APP"
 uapi SSL start_autossl_check | grep -E "status|error" || true
 echo "== check"
 curl -s -o /dev/null -w "pilotsonic.com -> HTTP %{http_code}\n" -m 60 https://pilotsonic.com/login || true

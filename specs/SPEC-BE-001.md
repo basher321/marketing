@@ -56,3 +56,8 @@ AC-006 Every FR/NFR mapped to a package
 Added `imageio-ffmpeg==0.6.0`, under "Video". It ships a static ffmpeg binary (7.1, with libx264) as a
 platform wheel, so no system ffmpeg is needed. Command Chat uses it to turn OpenAI images into a slideshow
 MP4, because OpenAI's Sora video API shut down on 2026-09-24.
+
+## Amendment (SPEC-BE-108, 2026-10-21)
+
+- Adds `phonenumbers==9.0.41` (pure Python, no build step): customer phone numbers are normalised to E.164 before an
+  order confirmation SMS is sent or a reply is matched.

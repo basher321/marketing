@@ -13,7 +13,10 @@ from app.api.v1 import (
     content,
     conversations,
     customers,
+    ecommerce,
+    expenses,
     faqs,
+    inbox,
     integrations,
     inventory,
     kb,
@@ -31,6 +34,7 @@ from app.api.v1 import (
     orders,
     policies,
     pricing,
+    product_categories,
     products,
     scheduled_posts,
     shipping,
@@ -48,12 +52,15 @@ api_router.include_router(tenants.router)
 api_router.include_router(users.router)
 api_router.include_router(orchestrator.router)
 api_router.include_router(products.router)
+api_router.include_router(product_categories.router)  # SPEC-BE-111
+api_router.include_router(ecommerce.router)  # SPEC-BE-111
 api_router.include_router(inventory.router)
 api_router.include_router(pricing.router)
 api_router.include_router(shipping.router)
 api_router.include_router(orders.router)
 api_router.include_router(customers.router)
 api_router.include_router(conversations.router)
+api_router.include_router(inbox.router)  # SPEC-BE-112
 api_router.include_router(faqs.router)
 api_router.include_router(policies.router)
 api_router.include_router(brand.router)
@@ -74,6 +81,7 @@ api_router.include_router(paid.router)
 api_router.include_router(ai_campaigns.router)
 api_router.include_router(zernio.router)  # SPEC-BE-084
 api_router.include_router(analytics.router)
+api_router.include_router(expenses.router)  # SPEC-BE-110
 api_router.include_router(workflows.router)
 api_router.include_router(approvals.router)
 api_router.include_router(integrations.router)

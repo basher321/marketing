@@ -3,6 +3,8 @@
 // needs eval and plain http. The CSP allows the backend origin from
 // NEXT_PUBLIC_API_BASE_URL, data:/blob: images and media (branding, ad previews),
 // inline styles (the shell uses style props) and Next's inline bootstrap scripts.
+// SPEC-FE-076: Meta's JS SDK for WhatsApp Embedded Signup (connect.facebook.net,
+// its facebook.com frames and calls) — only those Meta hosts.
 const isProd = process.env.NODE_ENV === "production";
 
 function apiOrigin() {
@@ -25,12 +27,14 @@ function securityHeaders() {
     const api = apiOrigin();
     const csp = [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline'",
-      "style-src 'self' 'unsafe-inline'",
+      "script-src 'self' 'unsafe-inline' https://connect.facebook.net",
+      // The PilotSonic font (SPEC-FE-072) from Google Fonts: its stylesheet and font files.
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       `img-src 'self' data: blob: https:${api ? ` ${api}` : ""}`,
       `media-src 'self' data: blob: https:${api ? ` ${api}` : ""}`,
-      "font-src 'self' data:",
-      `connect-src 'self'${api ? ` ${api}` : ""}`,
+      "font-src 'self' data: https://fonts.gstatic.com",
+      `connect-src 'self'${api ? ` ${api}` : ""} https://*.facebook.com https://connect.facebook.net`,
+      "frame-src https://*.facebook.com",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",
@@ -47,6 +51,9 @@ function securityHeaders() {
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   poweredByHeader: false,
+  // Self-contained server bundle (.next/standalone/server.js) for the cPanel
+  // "Setup Node.js App" host, which runs it under Passenger with its own PORT.
+  output: "standalone",
   // Lets a production build be checked without touching the dev server's .next
   // (SPEC-FE-047 G4). Unset = the default ".next".
   ...(process.env.NEXT_BUILD_DIR ? { distDir: process.env.NEXT_BUILD_DIR } : {}),

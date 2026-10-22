@@ -48,8 +48,8 @@ export default function AdManagerPage() {
     <div className="mx-auto max-w-[1000px]">
       <div className="mb-5 flex items-start justify-between gap-4">
         <div>
-          <h1 className="m-0 mb-1 text-[22px] font-bold">Ad Manager</h1>
-          <p className="m-0 text-muted">Choose where your ads will run. Each platform has its own objectives and steps.</p>
+          <h1 className="page-title">Ad Manager</h1>
+          <p className="page-subtitle mb-0">Choose where your ads will run. Each platform has its own objectives and steps.</p>
         </div>
         <Link href="/marketing/paid" className="btn btn-secondary">
           Cancel

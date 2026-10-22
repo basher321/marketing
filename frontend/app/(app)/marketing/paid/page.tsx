@@ -143,8 +143,8 @@ function CampaignList() {
     <>
       <div className="mb-5 flex items-center justify-between">
         <div>
-          <h1 className="m-0 mb-1 text-[22px] font-bold">Paid Marketing</h1>
-          <p className="m-0 text-muted">Campaign → Ad set → Ad, published to the connected ad platforms.</p>
+          <h1 className="page-title">Paid Marketing</h1>
+          <p className="page-subtitle mb-0">Campaign → Ad set → Ad, published to the connected ad platforms.</p>
         </div>
         <Link href={newTabHref("/marketing/paid/ad-manager")} target="_blank" rel="noopener" className="btn">
           + New campaign

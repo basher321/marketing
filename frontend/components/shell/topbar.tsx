@@ -2,27 +2,28 @@
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { approvalKeys, fetchPendingApprovals } from "@/lib/api/approvals";
 import { apiFetch } from "@/lib/api/client";
+import { fetchPlatformMe, platformKeys } from "@/lib/api/platform";
 import { fetchUser, tenantKeys } from "@/lib/api/tenant";
 import { clearAuthToken, currentUser, getRefreshToken } from "@/lib/auth/token";
 import type { OrgUser } from "@/lib/types/tenant";
 
-import { TOGGLE_NAV_EVENT } from "./sidebar";
+import { Icon } from "./icons";
+import { NAV_SECTIONS, pageTitle, SUPER_ADMIN_SECTION } from "./nav";
+import { openOverlay, setPrefs, usePrefs } from "./prefs";
 
-// Topbar (SPEC-FE-002), reproducing the mockup's .topbar/.search/.topbar-right/
-// .icon-btn/.avatar rules. The search input does nothing and the two icon
-// buttons have no click handler or dropdown.
-//
-// The avatar (the mockup's fixed "RB") shows the signed-in user's initials and
-// opens an account menu: name, email, role, and Log out. Logout (SPEC-FE-004
-// rule 8) clears
-// the stored token and does a full navigation to /login, which also discards
-// every cached tenant response (same path as the 401 handler in
-// app/(app)/providers.tsx).
-// SPEC-FE-047 G3: the refresh token is revoked on the server first (best effort;
-// the backend always answers 204), so a copied token stops working too.
+// Top bar in the PilotSonic dashboard design: a floating glass bar with the
+// sidebar toggle, the page title, the "Search pages or ask the agent" pill
+// (opens the command palette, also Ctrl/⌘ K), notifications, preferences and
+// the account menu.
+
+// Logout (SPEC-FE-004 rule 8, SPEC-FE-047 G3): revoke the refresh token on the
+// server (best effort; the backend always answers 204), clear it locally, then
+// a full navigation to /login discards every cached tenant response.
 async function logout(): Promise<void> {
   const refreshToken = getRefreshToken();
   if (refreshToken !== null) {
@@ -36,6 +37,11 @@ async function logout(): Promise<void> {
   window.location.replace("/login");
 }
 
+export function displayName(user: OrgUser | undefined): string {
+  if (!user) return "";
+  return [user.first_name, user.last_name].filter(Boolean).join(" ") || user.email;
+}
+
 function initials(user: OrgUser | undefined): string {
   if (!user) return "";
   const name = [user.first_name, user.last_name].filter((p): p is string => !!p?.trim());
@@ -43,19 +49,23 @@ function initials(user: OrgUser | undefined): string {
   return letters.slice(0, 2).toUpperCase();
 }
 
-function AccountMenu() {
-  const [open, setOpen] = useState(false);
+/** The signed-in user (GET /users/{id}); shared with the Dashboard greeting. */
+export function useSignedInUser() {
   const [userId, setUserId] = useState<string | null>(null);
-  const ref = useRef<HTMLDivElement>(null);
   // localStorage/sessionStorage are browser-only, so the id is read after mount.
   useEffect(() => setUserId(currentUser()), []);
-  const user = useQuery({
+  return useQuery({
     queryKey: tenantKeys.user(userId ?? ""),
     queryFn: () => fetchUser(userId!),
     enabled: !!userId,
     staleTime: 5 * 60_000,
   });
+}
 
+// One popover open at a time; outside click and Escape close it.
+function usePopover() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
@@ -69,90 +79,162 @@ function AccountMenu() {
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
+  return { open, setOpen, ref };
+}
 
-  const u = user.data;
-  const name = u ? [u.first_name, u.last_name].filter(Boolean).join(" ") || u.email : "";
+function ago(seconds: number): string {
+  if (seconds < 60) return "just now";
+  const m = Math.floor(seconds / 60);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} hour${h === 1 ? "" : "s"} ago`;
+  const d = Math.floor(h / 24);
+  return `${d} day${d === 1 ? "" : "s"} ago`;
+}
+
+// The design's notification bell. The backend has no notifications feed, so it
+// lists what really waits for the user: pending approvals (the same query and
+// cache as Command Chat's Pending Approvals panel).
+function Notifications() {
+  const { open, setOpen, ref } = usePopover();
+  const pending = useQuery({ queryKey: approvalKeys.pending, queryFn: fetchPendingApprovals });
+  const items = pending.data?.items ?? [];
   return (
-    <div ref={ref} className="relative">
+    <div className="pop-wrap" ref={ref}>
       <button
         type="button"
+        className="icon-btn"
+        aria-label={items.length ? `Notifications: ${items.length} pending approvals` : "Notifications"}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <Icon name="bell" />
+        {items.length > 0 && <i className="bell-dot" />}
+      </button>
+      <div className={`pop${open ? " open" : ""}`} role="dialog" aria-label="Notifications">
+        <div className="pop-h">
+          <b>Waiting for you</b>
+          {items.length > 0 && <span className="ag-count">{items.length}</span>}
+        </div>
+        {pending.isPending ? (
+          <div className="pop-f">Loading…</div>
+        ) : pending.isError ? (
+          <div className="pop-f">Couldn&apos;t load approvals.</div>
+        ) : items.length === 0 ? (
+          <div className="pop-f">You&apos;re all caught up. Nothing needs your approval.</div>
+        ) : (
+          <>
+            {items.slice(0, 5).map((a) => (
+              <Link key={a.id} href="/chat" className="nt" onClick={() => setOpen(false)}>
+                <span className="nt-ico" style={{ ["--c" as string]: "var(--warn)" }}>
+                  <Icon name="check" />
+                </span>
+                <span className="min-w-0">
+                  <b className="truncate">{a.title}</b>
+                  <small>
+                    {a.engine ? `${a.engine} · ` : ""}
+                    {ago(a.elapsed_seconds)}
+                  </small>
+                </span>
+                <i className="nt-dot" />
+              </Link>
+            ))}
+            <div className="pop-f">
+              {items.length > 5 ? `${items.length - 5} more · ` : ""}
+              <Link href="/chat" className="text-accent" onClick={() => setOpen(false)}>
+                Review in Command Chat
+              </Link>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AccountMenu() {
+  const { open, setOpen, ref } = usePopover();
+  const user = useSignedInUser();
+  const u = user.data;
+  const name = displayName(u);
+  return (
+    <div className="pop-wrap" ref={ref}>
+      <button
+        type="button"
+        className="avatar"
         title={u ? `Account: ${name}` : "Account"}
         aria-label="Account menu"
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="flex h-[34px] w-[34px] cursor-pointer items-center justify-center rounded-full border-none bg-gradient-to-br from-indigo-500 to-chart-2 text-xs font-semibold text-white"
       >
-        {initials(u) || "👤"}
+        {initials(u) || "U"}
       </button>
-      {open && (
-        <div
-          role="menu"
-          className="absolute right-0 top-[42px] z-50 w-[240px] rounded-md border border-border bg-panel p-3 text-text shadow-lg"
-        >
-          {u ? (
-            <div className="mb-3 border-b border-border pb-3">
-              <div className="truncate font-semibold">{name}</div>
-              <div className="truncate text-xs text-muted">{u.email}</div>
-              <div className="mt-1 text-xs capitalize text-muted">Role: {u.role}</div>
+      <div className={`pop acct${open ? " open" : ""}`} role="menu">
+        {u ? (
+          <div className="acct-who">
+            <div className="avatar">{initials(u)}</div>
+            <div className="min-w-0">
+              <b className="truncate">{name}</b>
+              <small>{u.email}</small>
+              <small className="capitalize">Role: {u.role}</small>
             </div>
-          ) : (
-            <div className="mb-3 border-b border-border pb-3 text-xs text-muted">
-              {user.isError ? "Couldn't load your account." : "Loading…"}
-            </div>
-          )}
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => void logout()}
-            className="w-full cursor-pointer rounded-md border border-border bg-bg px-3 py-2 text-left text-danger"
-          >
-            Log out
+          </div>
+        ) : (
+          <div className="acct-who text-xs text-muted">{user.isError ? "Couldn't load your account." : "Loading…"}</div>
+        )}
+        <div className="grid gap-2">
+          <Link href="/settings" role="menuitem" className="btn btn-secondary acct-btn" onClick={() => setOpen(false)}>
+            <Icon name="gear" /> Settings
+          </Link>
+          <button type="button" role="menuitem" className="btn btn-secondary acct-btn text-danger" onClick={() => void logout()}>
+            <Icon name="logout" /> Sign out
           </button>
         </div>
-      )}
+      </div>
     </div>
   );
 }
 
 export default function Topbar() {
+  const pathname = usePathname();
+  const prefs = usePrefs();
+  const me = useQuery({ queryKey: platformKeys.me, queryFn: fetchPlatformMe, staleTime: 5 * 60_000 });
+  const title = pageTitle(pathname, me.data?.super_admin ? [...NAV_SECTIONS, SUPER_ADMIN_SECTION] : NAV_SECTIONS);
+  const [mac, setMac] = useState(false);
+  useEffect(() => setMac(/Mac|iPhone|iPad/.test(navigator.platform)), []);
+  const toggleLabel = prefs.collapsed ? "Expand sidebar" : "Collapse sidebar";
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-border bg-panel px-4 py-3 lg:px-6">
-      {/* SPEC-FE-063: below 1024px the sidebar is a drawer this button opens. */}
+    <header className="topbar">
       <button
         type="button"
-        aria-label="Open menu"
+        className="icon-btn desk-only"
+        aria-label={toggleLabel}
+        title={toggleLabel}
         aria-controls="app-sidebar"
-        onClick={() => window.dispatchEvent(new Event(TOGGLE_NAV_EVENT))}
-        className="flex h-[34px] w-[34px] shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-panel text-text lg:hidden"
+        onClick={() => setPrefs({ collapsed: !prefs.collapsed })}
       >
-        ☰
+        <Icon name="panel" />
       </button>
-      <input
-        className="min-w-0 max-w-[420px] flex-1 rounded-md border border-border bg-bg px-3 py-2 text-text"
-        placeholder="Search products, orders, campaigns..."
-        aria-label="Search"
-      />
-      <div className="flex shrink-0 items-center gap-2 lg:gap-3">
-        <button
-          type="button"
-          title="Notifications"
-          aria-label="Notifications"
-          className="flex h-[34px] w-[34px] cursor-pointer items-center justify-center rounded-md border border-border bg-panel text-text"
-        >
-          ◔
+      <Link href="/dashboard" className="pl-mtile mob-only" aria-label="PilotSonic home" />
+      <h2 key={title} className="tb-title swap">
+        {title}
+      </h2>
+      <button type="button" className="search-pill" aria-label="Open command palette" onClick={() => openOverlay("palette")}>
+        <Icon name="search" />
+        <span>Search pages or ask the agent</span>
+        <kbd>{mac ? "⌘ K" : "Ctrl K"}</kbd>
+      </button>
+      <div className="tb-right">
+        <button type="button" className="icon-btn mob-only" aria-label="Search" onClick={() => openOverlay("palette")}>
+          <Icon name="search" />
         </button>
-        {/* The mockup's settings icon, now opening Organization Settings (SPEC-FE-036). */}
-        <Link
-          href="/settings"
-          title="Settings"
-          aria-label="Settings"
-          className="flex h-[34px] w-[34px] cursor-pointer items-center justify-center rounded-md border border-border bg-panel text-text no-underline"
-        >
-          ◈
-        </Link>
+        <Notifications />
+        <button type="button" className="icon-btn desk-only" aria-label="Preferences" title="Preferences" onClick={() => openOverlay("prefs")}>
+          <Icon name="sliders" />
+        </button>
         <AccountMenu />
       </div>
-    </div>
+    </header>
   );
 }

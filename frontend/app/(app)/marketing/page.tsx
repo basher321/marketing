@@ -24,8 +24,8 @@ const AREAS = [
 export default function MarketingPage() {
   return (
     <>
-      <h1 className="m-0 mb-1 text-[22px] font-bold">{"Marketing Automation"}</h1>
-      <p className="m-0 mb-5 text-muted">{"Content, scheduling, ads — coordinated across every channel."}</p>
+      <h1 className="page-title">{"Marketing Automation"}</h1>
+      <p className="page-subtitle">{"Content, scheduling, ads — coordinated across every channel."}</p>
       <div className="mb-4 grid gap-4 md:grid-cols-2">
         {AREAS.map((a) => (
           <Link key={a.href} href={a.href} className="card block text-inherit no-underline hover:border-accent" data-testid={`area-${a.href.split("/").pop()}`}>

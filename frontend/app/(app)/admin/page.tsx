@@ -14,6 +14,7 @@ import {
   savePlatformSettings,
   testPlatformSettings,
 } from "@/lib/api/platform";
+import AdminIntegrations from "@/components/integrations/admin-health";
 import type { AccessGroup, CompanyList, CompanyRow, SettingGroupRead } from "@/lib/types/platform";
 
 // Super admin (SPEC-FE-068 / SPEC-BE-101): PilotSonic's own API keys, used by
@@ -278,20 +279,21 @@ export default function SuperAdminPage() {
   if (!me.data?.super_admin) {
     return (
       <div data-testid="admin-not-found">
-        <h1 className="m-0 mb-1 text-[22px] font-bold">Not found</h1>
-        <p className="m-0 text-muted">This page doesn&apos;t exist.</p>
+        <h1 className="page-title">Not found</h1>
+        <p className="page-subtitle mb-0">This page doesn&apos;t exist.</p>
       </div>
     );
   }
   return (
     <div data-testid="super-admin">
-      <h1 className="m-0 mb-1 text-[22px] font-bold">Super admin</h1>
-      <p className="m-0 mb-5 text-muted">
+      <h1 className="page-title">Super admin</h1>
+      <p className="page-subtitle">
         PilotSonic&apos;s own API keys, used by every company. Companies never enter keys: they only connect their own pages
         and accounts. Keys are stored encrypted and never shown again.
       </p>
       <AIModels admin />
       <CompanyAccessSection />
+      <AdminIntegrations />
       <section className="mb-8">
         <h2 className="section-title">Platforms and sign-in apps</h2>
         {settings.isPending ? (
