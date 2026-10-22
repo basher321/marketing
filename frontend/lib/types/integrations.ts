@@ -43,6 +43,8 @@ export interface CatalogProvider {
   docs_url: string;
   /** SPEC-BE-101: no token form; connect with the sign-in button, Zernio or SocialAPI. */
   connect_only?: boolean;
+  /** SPEC-BE-115: API keys only PilotSonic's Super admin enters; a company sees the status and can test. */
+  admin_keys?: boolean;
 }
 
 export interface IntegrationSave {

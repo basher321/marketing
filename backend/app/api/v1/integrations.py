@@ -113,6 +113,7 @@ def save_integration(
 ) -> dict[str, Any]:
     if provider in integration_service.CONNECT_ONLY:  # SPEC-BE-101 FR5
         raise ConflictError(integration_service.CONNECT_ONLY_MESSAGE)
+    integration_service.check_key_change(db, str(current_user.id), provider)  # SPEC-BE-115
     return integration_service.save_credentials(
         db, str(current_user.tenant_id), str(current_user.id), provider, payload
     )
@@ -133,4 +134,5 @@ def disconnect_integration(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("manager")),
 ) -> None:
+    integration_service.check_key_change(db, str(current_user.id), provider)  # SPEC-BE-115
     integration_service.disconnect(db, str(current_user.tenant_id), str(current_user.id), provider)

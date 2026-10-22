@@ -4,7 +4,8 @@ import type { IconName } from "./icons";
 // command palette and the top bar title. Sections and order follow the
 // PilotSonic dashboard design (Main / Engines / Configuration); Marketing keeps
 // its sub-pages (SPEC-FE-049, SPEC-FE-054) and Settings (SPEC-FE-036) stays.
-export type NavChild = { label: string; href: string };
+// superAdmin (SPEC-FE-080): only PilotSonic's Super admin sees the child.
+export type NavChild = { label: string; href: string; superAdmin?: boolean };
 // minRole (SPEC-FE-078): the lowest app role that sees the item. Hiding is only a
 // convenience; the backend enforces every permission.
 export type NavItem = { label: string; href: string; icon: IconName; children?: NavChild[]; minRole?: Role };
@@ -34,6 +35,8 @@ export const NAV_SECTIONS: NavSection[] = [
           { label: "Paid Marketing", href: "/marketing/paid" },
           { label: "Organic Marketing", href: "/marketing/organic" },
           { label: "SocialAPI", href: "/marketing/organic/socialapi" },
+          // Platform API keys and developer apps (SPEC-FE-080): the Super admin's section on /admin.
+          { label: "Social API Configuration", href: "/admin#platforms", superAdmin: true },
         ],
       },
       { label: "Customer Service", href: "/customer", icon: "users" },
@@ -84,6 +87,15 @@ export function askHref(text: string): string {
 
 export function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+/** The sections this user sees: Super admin also gets the PilotSonic section and the superAdmin children. */
+export function navSections(superAdmin: boolean | undefined): NavSection[] {
+  if (superAdmin) return [...NAV_SECTIONS, SUPER_ADMIN_SECTION];
+  return NAV_SECTIONS.map((s) => ({
+    ...s,
+    items: s.items.map((i) => (i.children ? { ...i, children: i.children.filter((c) => !c.superAdmin) } : i)),
+  }));
 }
 
 /** Every page as [label, href], children included, for the palette and titles. */

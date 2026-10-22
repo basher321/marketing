@@ -9,7 +9,7 @@ import { fetchPlatformMe, platformKeys } from "@/lib/api/platform";
 import { fetchMyProfile, userKeys } from "@/lib/api/users";
 
 import { Icon, type IconName } from "./icons";
-import { AGENT_PROMPTS, askHref, flatPages, forRole, isActive, NAV_SECTIONS, SUPER_ADMIN_SECTION, TAB_ITEMS } from "./nav";
+import { AGENT_PROMPTS, askHref, flatPages, forRole, isActive, NAV_SECTIONS, navSections, SUPER_ADMIN_SECTION, TAB_ITEMS } from "./nav";
 import {
   ACCENTS,
   isDarkNow,
@@ -28,7 +28,7 @@ import {
 function useSections() {
   const me = useQuery({ queryKey: platformKeys.me, queryFn: fetchPlatformMe, staleTime: 5 * 60_000 });
   const profile = useQuery({ queryKey: userKeys.me, queryFn: fetchMyProfile, staleTime: 5 * 60_000 });
-  return forRole(me.data?.super_admin ? [...NAV_SECTIONS, SUPER_ADMIN_SECTION] : NAV_SECTIONS, profile.data?.role);
+  return forRole(navSections(me.data?.super_admin), profile.data?.role);
 }
 
 function iconFor(href: string): IconName {

@@ -15,6 +15,7 @@ import type {
   SettingGroupRead,
   SettingTest,
 } from "../types/platform";
+import type { IntegrationSave, IntegrationStatus, IntegrationTestResult } from "../types/integrations";
 import { apiFetch } from "./client";
 
 export const platformKeys = {
@@ -22,6 +23,7 @@ export const platformKeys = {
   aiModels: ["platform", "ai-models"] as const,
   settings: ["platform", "settings"] as const,
   companies: (q: string, page: number) => ["platform", "companies", q, page] as const,
+  companyIntegrations: (tenantId: string) => ["platform", "companies", tenantId, "integrations"] as const,
   branding: ["platform", "branding"] as const,
   health: ["platform", "integrations", "health"] as const,
   errors: (provider: string, cursor: string | null) => ["platform", "integrations", "errors", provider, cursor] as const,
@@ -56,6 +58,27 @@ export function saveCompanyAccess(tenantId: string, access: Partial<Record<Acces
   return apiFetch<CompanyAccess>(`/api/v1/platform/companies/${tenantId}/access`, { method: "PUT", body: { access } });
 }
 
+
+/** SPEC-BE-115: a company's API-key integrations (store, email, CRM, WhatsApp token), set by the Super admin. */
+function companyIntegrationPath(tenantId: string, provider?: string): string {
+  return `/api/v1/platform/companies/${tenantId}/integrations${provider ? `/${encodeURIComponent(provider)}` : ""}`;
+}
+
+export function fetchCompanyIntegrations(tenantId: string): Promise<IntegrationStatus[]> {
+  return apiFetch<IntegrationStatus[]>(companyIntegrationPath(tenantId));
+}
+
+export function saveCompanyIntegration(tenantId: string, provider: string, body: IntegrationSave): Promise<IntegrationTestResult> {
+  return apiFetch<IntegrationTestResult>(companyIntegrationPath(tenantId, provider), { method: "PUT", body: { ...body } });
+}
+
+export function testCompanyIntegration(tenantId: string, provider: string): Promise<IntegrationTestResult> {
+  return apiFetch<IntegrationTestResult>(`${companyIntegrationPath(tenantId, provider)}/test`, { method: "POST" });
+}
+
+export function removeCompanyIntegration(tenantId: string, provider: string): Promise<void> {
+  return apiFetch<void>(companyIntegrationPath(tenantId, provider), { method: "DELETE" });
+}
 
 /** GET /platform/branding (SPEC-BE-113): public, the login page reads it too. */
 export function fetchAppBranding(): Promise<AppBranding> {

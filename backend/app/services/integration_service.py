@@ -137,6 +137,22 @@ CONNECT_ONLY = ("facebook", "instagram", "tiktok", "linkedin", "meta_ads", "tikt
                 "x_ads", "snapchat_ads", "pinterest_ads")
 CONNECT_ONLY_MESSAGE = "Connect your page with the Connect button, or through Zernio / SocialAPI; PilotSonic doesn't take pasted tokens."
 
+# SPEC-BE-115: the providers that take typed API keys (WhatsApp token, email, store, CRM). Only the
+# Super admin enters or removes them: on their own workspace, or for a company from /admin. Company
+# users can still test them, and every Connect / sign-in flow stays theirs.
+KEY_PROVIDERS = tuple(p.provider for p in verifier.CATALOG if p.provider not in CONNECT_ONLY)
+KEYS_BY_ADMIN_MESSAGE = (
+    "API keys are set by PilotSonic's Super admin. Contact PilotSonic to connect or change this integration."
+)
+
+
+def check_key_change(db: Session, actor_user_id: str, provider: str) -> None:
+    """SPEC-BE-115: a key provider's credentials are saved or removed only by the Super admin."""
+    from app.services import platform_service
+
+    if provider in KEY_PROVIDERS and not platform_service.is_super_admin(db, actor_user_id):
+        raise AppError(KEYS_BY_ADMIN_MESSAGE, 403)
+
 
 def catalog() -> list[dict[str, Any]]:
     return [
@@ -151,6 +167,7 @@ def catalog() -> list[dict[str, Any]]:
             "test": True,
             "docs_url": p.docs_url,
             "connect_only": p.provider in CONNECT_ONLY,
+            "admin_keys": p.provider not in CONNECT_ONLY,
         }
         for p in sorted(verifier.CATALOG, key=lambda p: CATEGORY_ORDER.index(p.category))
     ]
@@ -744,3 +761,35 @@ def mark_ad_platform_expired(db: Session, tenant_id: str, provider: str, message
     if record is not None and record.status != "disconnected":
         record.status = "expired"
         record.last_error = message[:500]
+
+
+# ---- SPEC-BE-115: the Super admin enters a company's API keys from /admin ----
+def _company_key_provider(db: Session, tenant_id: str, provider: str) -> None:
+    from app.models.tenant import Tenant
+
+    if db.get(Tenant, tenant_id) is None:
+        raise NotFoundError("Company not found.")
+    if provider not in KEY_PROVIDERS:
+        raise AppError("That integration is connected by the company itself, not with API keys.", 422)
+
+
+def company_key_statuses(db: Session, tenant_id: str) -> list[dict[str, Any]]:
+    _company_key_provider(db, tenant_id, KEY_PROVIDERS[0])
+    return [s for s in list_integration_statuses(db, tenant_id) if s["provider"] in KEY_PROVIDERS]
+
+
+def company_save_keys(
+    db: Session, tenant_id: str, admin_user_id: str, provider: str, payload: IntegrationSave
+) -> dict[str, Any]:
+    _company_key_provider(db, tenant_id, provider)
+    return save_credentials(db, tenant_id, admin_user_id, provider, payload)
+
+
+def company_test_keys(db: Session, tenant_id: str, admin_user_id: str, provider: str) -> dict[str, Any]:
+    _company_key_provider(db, tenant_id, provider)
+    return test_connection(db, tenant_id, admin_user_id, provider)
+
+
+def company_remove_keys(db: Session, tenant_id: str, admin_user_id: str, provider: str) -> None:
+    _company_key_provider(db, tenant_id, provider)
+    disconnect(db, tenant_id, admin_user_id, provider)

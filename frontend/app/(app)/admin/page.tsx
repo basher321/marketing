@@ -1,17 +1,24 @@
 "use client";
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 import PasswordInput from "@/components/auth/password-input";
 import AIModels from "@/components/integrations/ai-models";
+import ConnectPanel, { type PanelOps } from "@/components/integrations/connect-panel";
+import SideSheet from "@/components/ui/side-sheet";
+import { fetchCatalog, integrationKeys } from "@/lib/api/integrations";
 import {
   fetchCompanies,
+  fetchCompanyIntegrations,
   fetchPlatformMe,
   fetchPlatformSettings,
   platformKeys,
+  removeCompanyIntegration,
   saveCompanyAccess,
+  saveCompanyIntegration,
   savePlatformSettings,
+  testCompanyIntegration,
   testPlatformSettings,
 } from "@/lib/api/platform";
 import AdminIntegrations from "@/components/integrations/admin-health";
@@ -136,6 +143,64 @@ function SettingCard({ data }: { data: SettingGroupRead }) {
   );
 }
 
+// SPEC-FE-080 / SPEC-BE-115: a company's API keys (store, email, CRM, WhatsApp
+// token), which only the Super admin enters. The list is a side sheet; choosing
+// a provider swaps it for the usual connect form, aimed at /platform/companies.
+const KEY_BADGE: Record<string, string> = { connected: "badge-success", needs_reconnect: "badge-warn", not_connected: "badge-neutral" };
+const KEY_LABEL: Record<string, string> = { connected: "Connected", needs_reconnect: "Reconnect", not_connected: "Not connected" };
+
+function CompanyKeys({ row, onClose }: { row: CompanyRow; onClose: () => void }) {
+  const [provider, setProvider] = useState<string | null>(null);
+  const listKey = platformKeys.companyIntegrations(row.tenant_id);
+  const list = useQuery({ queryKey: listKey, queryFn: () => fetchCompanyIntegrations(row.tenant_id) });
+  const catalog = useQuery({ queryKey: integrationKeys.catalog, queryFn: fetchCatalog, staleTime: Infinity });
+  const ops: PanelOps = {
+    save: (p, body) => saveCompanyIntegration(row.tenant_id, p, body),
+    test: (p) => testCompanyIntegration(row.tenant_id, p),
+    disconnect: (p) => removeCompanyIntegration(row.tenant_id, p),
+    listKey,
+  };
+  const spec = provider ? catalog.data?.find((p) => p.provider === provider) : undefined;
+  const status = provider ? list.data?.find((i) => i.provider === provider) : undefined;
+  if (spec && status) {
+    return <ConnectPanel key={provider} spec={spec} status={status} ops={ops} onClose={() => setProvider(null)} />;
+  }
+  return (
+    <SideSheet title={`API keys · ${row.name}`} onClose={onClose}>
+      <p className="m-0 mb-3 text-xs text-muted">
+        Only you enter these for {row.name}: they see the status (keys masked) and can test, but can&apos;t change them.
+      </p>
+      {list.isPending ? (
+        <p className="text-[13px] text-muted">Loading…</p>
+      ) : list.isError ? (
+        <p className="text-[13px] text-danger" role="alert">
+          Failed to load: {list.error.message}
+        </p>
+      ) : (
+        <ul className="m-0 list-none p-0" data-testid="company-keys">
+          {list.data.map((i) => (
+            <li key={i.provider} className="flex items-center justify-between gap-2 border-b border-border py-2 last:border-0">
+              <div>
+                <div className="text-[13px] font-semibold">{i.name}</div>
+                <div className="text-xs text-muted">
+                  {i.category}
+                  {i.account_name ? ` · ${i.account_name}` : ""}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`badge ${KEY_BADGE[i.status]}`}>{KEY_LABEL[i.status]}</span>
+                <button type="button" className="btn btn-secondary btn-sm" disabled={!catalog.data} onClick={() => setProvider(i.provider)}>
+                  {i.status === "not_connected" ? "Add keys" : "Manage"}
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </SideSheet>
+  );
+}
+
 // SPEC-FE-069 / SPEC-BE-103: which companies may use each of PilotSonic's keys.
 // Everything is on by default; a switched-off company gets a clear "PilotSonic
 // hasn't enabled …" message instead of the service.
@@ -174,6 +239,7 @@ function CompanyAccessSection() {
   const [search, setSearch] = useState("");
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
+  const [keysFor, setKeysFor] = useState<CompanyRow | null>(null);
   const list = useQuery({
     queryKey: platformKeys.companies(q, page),
     queryFn: () => fetchCompanies(q, page, PAGE_SIZE),
@@ -227,6 +293,7 @@ function CompanyAccessSection() {
                     </th>
                   ))}
                   <th>Shared services</th>
+                  <th>API keys</th>
                 </tr>
               </thead>
               <tbody>
@@ -249,6 +316,11 @@ function CompanyAccessSection() {
                       <div>Zernio profile: {row.zernio_profile ? "yes" : "not yet"}</div>
                       {row.socialapi_error && <div className="text-danger">SocialAPI: {row.socialapi_error}</div>}
                     </td>
+                    <td>
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => setKeysFor(row)}>
+                        Keys
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -267,6 +339,7 @@ function CompanyAccessSection() {
           )}
         </>
       )}
+      {keysFor && <CompanyKeys key={keysFor.tenant_id} row={keysFor} onClose={() => setKeysFor(null)} />}
     </section>
   );
 }
@@ -274,6 +347,12 @@ function CompanyAccessSection() {
 export default function SuperAdminPage() {
   const me = useQuery({ queryKey: platformKeys.me, queryFn: fetchPlatformMe });
   const settings = useQuery({ queryKey: platformKeys.settings, queryFn: fetchPlatformSettings, enabled: me.data?.super_admin === true });
+  // /admin#platforms (Marketing › Social API Configuration): the section only exists once the page has
+  // loaded, after the browser's own jump to the anchor, so scroll to it then.
+  const ready = settings.isSuccess;
+  useEffect(() => {
+    if (ready && window.location.hash === "#platforms") document.getElementById("platforms")?.scrollIntoView({ block: "start" });
+  }, [ready]);
 
   if (me.isPending) return <p className="text-[13px] text-muted">Loading…</p>;
   if (!me.data?.super_admin) {
@@ -294,7 +373,8 @@ export default function SuperAdminPage() {
       <AIModels admin />
       <CompanyAccessSection />
       <AdminIntegrations />
-      <section className="mb-8">
+      {/* Marketing › Social API Configuration links here (SPEC-FE-080). */}
+      <section className="mb-8 scroll-mt-24" id="platforms">
         <h2 className="section-title">Platforms and sign-in apps</h2>
         {settings.isPending ? (
           <p className="text-[13px] text-muted">Loading…</p>

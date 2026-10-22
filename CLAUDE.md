@@ -444,6 +444,14 @@ section before trusting any model.
   - **Branding/health (BE-113):** public `GET /platform/branding`, `/users/me`, `/platform/integrations/{health,errors}`.
   - **Chat (BE-114):** `orders_awaiting_confirmation`, `update_order_status`, `send_order_confirmation`,
     `profit_and_loss`, `inspect_conversations`.
+- **API keys are entered by the Super admin only (2026-10-22): SPEC-BE-115 + SPEC-FE-080.** Verified on the local DB
+  (22 rolled-back checks) and by a browser E2E (18/18). No DDL.
+  - **Key providers:** `integration_service.KEY_PROVIDERS` = catalog providers not in `CONNECT_ONLY` (whatsapp, smtp,
+    sendgrid, shopify, woocommerce, hubspot, zoho, salesforce); the catalog marks them `admin_keys`.
+  - **Companies:** `PUT`/`DELETE /integrations/{key provider}` → 403 (`check_key_change`) unless the caller is the Super
+    admin; test still works. Every Connect / sign-in flow, Paid and Organic Marketing are unchanged.
+  - **Super admin:** `/platform/companies/{tenant_id}/integrations[/{provider}[/test]]` (GET/PUT/POST/DELETE) save a
+    company's keys with the existing service; the audit row is in the company's log with the Super admin as actor.
 - Structurally stubbed (routes exist, bodies minimal or "not_implemented"):
   `kb/documents` (list/ingest only, no embedding; the model matches the live
   table since SPEC-BE-071), webhooks other than Twilio/WhatsApp (404), the CRM/messaging

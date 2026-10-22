@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import ConnectPanel from "@/components/integrations/connect-panel";
 import { fetchCatalog, fetchIntegrations, integrationKeys } from "@/lib/api/integrations";
+import { fetchPlatformMe, platformKeys } from "@/lib/api/platform";
 import type { IntegrationConnectionStatus, IntegrationStatus } from "@/lib/types/integrations";
 
 // ============================================================================
@@ -61,9 +62,19 @@ function subtitle(i: IntegrationStatus): { text: string; tone: string } | null {
   return BLURBS[i.provider] ? { text: BLURBS[i.provider], tone: "text-muted" } : null;
 }
 
-function IntegrationCard({ integration, onOpen }: { integration: IntegrationStatus; onOpen: () => void }) {
+// SPEC-FE-080: an API-key integration a company can't edit (only the Super admin sets its keys).
+const MANAGED_BUTTON: Record<IntegrationConnectionStatus, string> = {
+  connected: "View",
+  needs_reconnect: "View",
+  not_connected: "Request setup",
+};
+
+function IntegrationCard({ integration, managed, onOpen }: { integration: IntegrationStatus; managed: boolean; onOpen: () => void }) {
   const view = STATUS_VIEW[integration.status];
-  const line = subtitle(integration);
+  const line =
+    managed && integration.status === "connected" && integration.configured_fields.length === 0
+      ? { text: "Set up by PilotSonic.", tone: "text-muted" }
+      : subtitle(integration);
   return (
     <div className="integration-card" data-provider={integration.provider}>
       <div className="integration-header">
@@ -72,7 +83,7 @@ function IntegrationCard({ integration, onOpen }: { integration: IntegrationStat
       </div>
       {line && <p className={`m-0 mb-2.5 text-xs ${line.tone}`}>{line.text}</p>}
       <button type="button" className="btn btn-secondary btn-sm" onClick={onOpen}>
-        {view.button}
+        {managed ? MANAGED_BUTTON[integration.status] : view.button}
       </button>
     </div>
   );
@@ -83,6 +94,10 @@ function IntegrationCard({ integration, onOpen }: { integration: IntegrationStat
 export default function IntegrationsGrid() {
   const integrations = useQuery({ queryKey: integrationKeys.list, queryFn: fetchIntegrations });
   const catalog = useQuery({ queryKey: integrationKeys.catalog, queryFn: fetchCatalog, staleTime: Infinity });
+  const me = useQuery({ queryKey: platformKeys.me, queryFn: fetchPlatformMe });
+  // Until /platform/me answers, treat the user as a company user: the safe (read-only) view.
+  const managed = (provider: string) =>
+    me.data?.super_admin !== true && catalog.data?.find((p) => p.provider === provider)?.admin_keys === true;
   const [open, setOpen] = useState<string | null>(null);
 
   if (integrations.isError || catalog.isError) {
@@ -115,13 +130,15 @@ export default function IntegrationsGrid() {
             <h2 className="section-title">{category}</h2>
             <div className="integrations-grid">
               {items.map((i) => (
-                <IntegrationCard key={i.provider} integration={i} onOpen={() => setOpen(i.provider)} />
+                <IntegrationCard key={i.provider} integration={i} managed={managed(i.provider)} onOpen={() => setOpen(i.provider)} />
               ))}
             </div>
           </section>
         );
       })}
-      {openSpec && openStatus && <ConnectPanel key={open} spec={openSpec} status={openStatus} onClose={() => setOpen(null)} />}
+      {openSpec && openStatus && (
+        <ConnectPanel key={open} spec={openSpec} status={openStatus} readOnly={managed(openSpec.provider)} onClose={() => setOpen(null)} />
+      )}
     </>
   );
 }

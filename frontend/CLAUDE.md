@@ -264,3 +264,8 @@ spec justifies it.
 - Dashboard stat-card spacing (SPEC-FE-079, 2026-10-22): `SummaryCards` and `BusinessCards` sit in one `.dash-stats`
   grid whose `--dash-gap` (16 px; 10 px compact or ≤ 480 px) is also the gap of both card grids, so row and column
   gaps match. Don't add margins to individual dashboard cards or grids.
+- API keys are the Super admin's (SPEC-FE-080, 2026-10-22): for catalog providers with `admin_keys` (WhatsApp token,
+  SMTP, SendGrid, Shopify, WooCommerce, HubSpot, Zoho, Salesforce) a company user gets a read-only `ConnectPanel`
+  ("Managed by PilotSonic", masked values, Test again). The Super admin sets them per company from /admin › Companies ›
+  Keys (`ConnectPanel` with `ops` aimed at `/platform/companies/{id}/integrations`). Nav children can be `superAdmin`;
+  use `navSections(superAdmin)` for the menu. Marketing › Social API Configuration → `/admin#platforms`.

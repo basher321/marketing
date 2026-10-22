@@ -12,7 +12,7 @@ import { fetchMyProfile, userKeys } from "@/lib/api/users";
 import { fetchWorkflows, workflowKeys } from "@/lib/api/workflows";
 
 import { Icon } from "./icons";
-import { forRole, isActive, NAV_SECTIONS, SUPER_ADMIN_SECTION } from "./nav";
+import { forRole, isActive, navSections } from "./nav";
 import { usePrefs } from "./prefs";
 
 // Sidebar in the PilotSonic dashboard design: a floating rounded panel with the
@@ -70,7 +70,7 @@ export default function Sidebar() {
   const logo = tenant.data?.branding.logo_url ?? app?.logo_url ?? null;
   const me = useQuery({ queryKey: platformKeys.me, queryFn: fetchPlatformMe, staleTime: 5 * 60_000 });
   const profile = useQuery({ queryKey: userKeys.me, queryFn: fetchMyProfile, staleTime: 5 * 60_000 });
-  const sections = forRole(me.data?.super_admin ? [...NAV_SECTIONS, SUPER_ADMIN_SECTION] : NAV_SECTIONS, profile.data?.role);
+  const sections = forRole(navSections(me.data?.super_admin), profile.data?.role);
   const [openGroups, setOpenGroups] = useState<string[]>([]);
   useEffect(() => setOpenGroups(readOpenGroups()), []);
   const toggleGroup = (href: string) =>

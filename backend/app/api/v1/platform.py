@@ -8,7 +8,7 @@ from uuid import UUID
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import AppError
@@ -30,8 +30,9 @@ from app.schemas.platform import (
     SettingGroupSave,
     SettingTest,
 )
+from app.schemas.integration import IntegrationSave, IntegrationStatus, IntegrationTestResult
 from app.schemas.sms import SmsNumberAssign, SmsNumberAssigned, SmsNumberList
-from app.services import ai_model_service, platform_service, sms_service
+from app.services import ai_model_service, integration_service, platform_service, sms_service
 from app.services.tenant_service import MAX_IMAGE_BYTES
 
 BrandingImage = Literal["logo", "logo_dark", "favicon"]
@@ -208,3 +209,32 @@ def list_sms_numbers(db: Session = Depends(get_db), admin: User = Depends(requir
 def assign_sms_number(tenant_id: UUID, payload: SmsNumberAssign, db: Session = Depends(get_db),
                       admin: User = Depends(require_super_admin)) -> dict[str, Any]:
     return sms_service.assign_number(db, str(tenant_id), payload.number, admin)
+
+
+# ---- SPEC-BE-115: a company's API keys (store, email, CRM, WhatsApp token), entered by the Super admin ----
+@router.get("/companies/{tenant_id}/integrations", response_model=list[IntegrationStatus], status_code=status.HTTP_200_OK)
+def company_integrations(tenant_id: UUID, db: Session = Depends(get_db),
+                         admin: User = Depends(require_super_admin)) -> list[dict[str, Any]]:
+    return integration_service.company_key_statuses(db, str(tenant_id))
+
+
+@router.put("/companies/{tenant_id}/integrations/{provider}", response_model=IntegrationTestResult,
+            status_code=status.HTTP_200_OK)
+def save_company_integration(tenant_id: UUID, provider: str, payload: IntegrationSave, db: Session = Depends(get_db),
+                             admin: User = Depends(require_super_admin)) -> dict[str, Any]:
+    return integration_service.company_save_keys(db, str(tenant_id), str(admin.id), provider, payload)
+
+
+@router.post("/companies/{tenant_id}/integrations/{provider}/test", response_model=IntegrationTestResult,
+             status_code=status.HTTP_200_OK)
+def test_company_integration(tenant_id: UUID, provider: str, db: Session = Depends(get_db),
+                             admin: User = Depends(require_super_admin)) -> dict[str, Any]:
+    return integration_service.company_test_keys(db, str(tenant_id), str(admin.id), provider)
+
+
+@router.delete("/companies/{tenant_id}/integrations/{provider}", response_model=None,
+               status_code=status.HTTP_204_NO_CONTENT)
+def remove_company_integration(tenant_id: UUID, provider: str, db: Session = Depends(get_db),
+                               admin: User = Depends(require_super_admin)) -> Response:
+    integration_service.company_remove_keys(db, str(tenant_id), str(admin.id), provider)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

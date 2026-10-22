@@ -13,7 +13,7 @@ import { clearAuthToken, currentUser, getRefreshToken } from "@/lib/auth/token";
 import type { OrgUser } from "@/lib/types/tenant";
 
 import { Icon } from "./icons";
-import { NAV_SECTIONS, pageTitle, SUPER_ADMIN_SECTION } from "./nav";
+import { navSections, pageTitle } from "./nav";
 import { openOverlay, setPrefs, usePrefs } from "./prefs";
 
 // Top bar in the PilotSonic dashboard design: a floating glass bar with the
@@ -200,7 +200,7 @@ export default function Topbar() {
   const pathname = usePathname();
   const prefs = usePrefs();
   const me = useQuery({ queryKey: platformKeys.me, queryFn: fetchPlatformMe, staleTime: 5 * 60_000 });
-  const title = pageTitle(pathname, me.data?.super_admin ? [...NAV_SECTIONS, SUPER_ADMIN_SECTION] : NAV_SECTIONS);
+  const title = pageTitle(pathname, navSections(me.data?.super_admin));
   const [mac, setMac] = useState(false);
   useEffect(() => setMac(/Mac|iPhone|iPad/.test(navigator.platform)), []);
   const toggleLabel = prefs.collapsed ? "Expand sidebar" : "Collapse sidebar";

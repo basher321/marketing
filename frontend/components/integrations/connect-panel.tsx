@@ -8,9 +8,24 @@ import PasswordInput from "@/components/auth/password-input";
 import { disconnectIntegration, integrationKeys, saveIntegration, testIntegration } from "@/lib/api/integrations";
 import { metaConnectUrl } from "@/lib/api/meta";
 import { ApiError, isRoleDenied } from "@/lib/types/common";
-import type { CatalogProvider, IntegrationStatus, IntegrationTestResult } from "@/lib/types/integrations";
+import type { CatalogProvider, IntegrationSave, IntegrationStatus, IntegrationTestResult } from "@/lib/types/integrations";
 
 const FORBIDDEN = "Only managers and above can change integrations.";
+
+/** Where the panel saves (SPEC-BE-115): the company's own routes by default, or the Super admin's
+ *  /platform/companies/{id}/integrations routes for a company. */
+export type PanelOps = {
+  save: (provider: string, body: IntegrationSave) => Promise<IntegrationTestResult>;
+  test: (provider: string) => Promise<IntegrationTestResult>;
+  disconnect: (provider: string) => Promise<void>;
+  listKey: readonly unknown[];
+};
+const COMPANY_OPS: PanelOps = {
+  save: saveIntegration,
+  test: testIntegration,
+  disconnect: disconnectIntegration,
+  listKey: integrationKeys.list,
+};
 
 /** A readable message: 403 in plain words; FastAPI 422 field errors joined; else the backend's text. */
 export function apiErrorText(err: Error, forbidden: string): string {
@@ -30,15 +45,21 @@ export function apiErrorText(err: Error, forbidden: string): string {
 // Connect / Manage side panel (SPEC-FE-037): the catalog's fields for one
 // provider. Secrets are password fields showing only the masked saved value;
 // leaving one empty keeps it. "Save & test" stores the credentials encrypted
-// and runs the provider's real verification call (SPEC-BE-052).
+// and runs the provider's real verification call (SPEC-BE-052). `readOnly`
+// (SPEC-FE-080): a company user looking at an API-key integration only the
+// Super admin sets: the saved (masked) values and Test again, no form.
 export default function ConnectPanel({
   spec,
   status,
   onClose,
+  ops = COMPANY_OPS,
+  readOnly = false,
 }: {
   spec: CatalogProvider;
   status: IntegrationStatus;
   onClose: () => void;
+  ops?: PanelOps;
+  readOnly?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [values, setValues] = useState<Record<string, string>>(() =>
@@ -46,9 +67,9 @@ export default function ConnectPanel({
   );
   const [accountName, setAccountName] = useState(status.account_name ?? "");
   const [result, setResult] = useState<IntegrationTestResult | null>(null);
-  const refresh = () => void queryClient.invalidateQueries({ queryKey: integrationKeys.list });
+  const refresh = () => void queryClient.invalidateQueries({ queryKey: ops.listKey });
   const save = useMutation({
-    mutationFn: () => saveIntegration(spec.provider, { account_name: accountName.trim() || null, fields: values }),
+    mutationFn: () => ops.save(spec.provider, { account_name: accountName.trim() || null, fields: values }),
     onSuccess: (r) => {
       setResult(r);
       setValues((cur) => Object.fromEntries(Object.entries(cur).map(([k, v]) => [k, spec.fields.find((f) => f.key === k)?.secret ? "" : v])));
@@ -56,14 +77,14 @@ export default function ConnectPanel({
     },
   });
   const test = useMutation({
-    mutationFn: () => testIntegration(spec.provider),
+    mutationFn: () => ops.test(spec.provider),
     onSuccess: (r) => {
       setResult(r);
       refresh();
     },
   });
   const disconnect = useMutation({
-    mutationFn: () => disconnectIntegration(spec.provider),
+    mutationFn: () => ops.disconnect(spec.provider),
     onSuccess: () => {
       refresh();
       onClose();
@@ -134,7 +155,27 @@ export default function ConnectPanel({
             )}
           </div>
         )}
-        {!connectOnly && (!isMeta || advanced) && (
+        {readOnly && (
+          <div className="mb-4 rounded-md border border-border bg-bg p-3 text-[13px]" data-testid="admin-keys">
+            <p className="m-0 font-semibold">Managed by PilotSonic</p>
+            <p className="m-0 mt-1 text-muted">
+              API keys are set by PilotSonic&apos;s Super admin. Contact PilotSonic to connect or change this integration.
+            </p>
+            {hasSaved && (
+              <dl className="mb-0 mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+                {spec.fields
+                  .filter((f) => status.masked[f.key])
+                  .map((f) => (
+                    <div key={f.key} className="contents">
+                      <dt className="text-muted">{f.label}</dt>
+                      <dd className="m-0 break-all">{status.masked[f.key]}</dd>
+                    </div>
+                  ))}
+              </dl>
+            )}
+          </div>
+        )}
+        {!readOnly && !connectOnly && (!isMeta || advanced) && (
         <>
         <div className="form-row">
           <label htmlFor="ic_account">Account name (optional)</label>
@@ -173,7 +214,7 @@ export default function ConnectPanel({
           </p>
         )}
         <div className="flex flex-wrap gap-2">
-          {!connectOnly && (!isMeta || advanced) && (
+          {!readOnly && !connectOnly && (!isMeta || advanced) && (
             <button type="submit" className="btn btn-sm" disabled={save.isPending}>
               {save.isPending ? "Saving & testing…" : "Save & test"}
             </button>
@@ -183,7 +224,7 @@ export default function ConnectPanel({
               {test.isPending ? "Testing…" : "Test again"}
             </button>
           )}
-          {status.status !== "not_connected" && (
+          {!readOnly && status.status !== "not_connected" && (
             <button
               type="button"
               className="btn btn-ghost btn-sm text-danger"
@@ -196,10 +237,12 @@ export default function ConnectPanel({
             </button>
           )}
         </div>
+        {!readOnly && (
         <p className="mb-0 mt-4 text-xs text-muted">
           Credentials are encrypted and never shown again. Connecting verifies them.
           {isMeta ? " Campaigns built in Campaigns are published to this Meta ad account." : " Publishing posts to this platform isn't active yet."}
         </p>
+        )}
       </form>
     </div>
   );

@@ -40,6 +40,8 @@ class CatalogProvider(BaseModel):
     docs_url: str
     # SPEC-BE-101: no token form; connect with the sign-in button, Zernio or SocialAPI.
     connect_only: bool = False
+    # SPEC-BE-115: API keys only the Super admin enters (companies see the status and can test).
+    admin_keys: bool = False
 
 
 class IntegrationSave(BaseModel):
