@@ -8,12 +8,7 @@ import {
   fetchScheduledPostCount,
   marketingKeys,
 } from "@/lib/api/marketing";
-
-// Rounds to the mockup's one decimal ("3.8x", "2.4%") without padding, so an
-// exact 0 renders as "0" rather than "0.0".
-function oneDecimal(value: number): string {
-  return String(Number(value.toFixed(1)));
-}
+import { formatNumber } from "@/lib/format/number";
 
 type CardState = { isPending: boolean; isError: boolean };
 
@@ -78,12 +73,12 @@ export default function SummaryCards() {
       <Card
         title="Avg. ROAS"
         state={campaign}
-        value={() => (campaign.data!.avg_roas === null ? "—" : `${oneDecimal(campaign.data!.avg_roas)}x`)}
+        value={() => (campaign.data!.avg_roas === null ? "—" : `${formatNumber(campaign.data!.avg_roas)}x`)}
       />
       <Card
         title="CTR (7d)"
         state={ctr}
-        value={() => (ctr.data!.ctr_7d_pct === null ? "—" : `${oneDecimal(ctr.data!.ctr_7d_pct)}%`)}
+        value={() => (ctr.data!.ctr_7d_pct === null ? "—" : `${formatNumber(ctr.data!.ctr_7d_pct)}%`)}
       />
     </div>
   );

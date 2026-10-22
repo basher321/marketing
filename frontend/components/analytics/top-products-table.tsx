@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { analyticsKeys, fetchTopProducts } from "@/lib/api/analytics";
 import { useCompanyCurrency } from "@/hooks/use-tenant";
 import { formatMoney } from "@/lib/format/money";
+import { formatNumber } from "@/lib/format/number";
 
 const COLUMN_COUNT = 4;
 
@@ -30,7 +31,7 @@ function revenue(value: number, currency: string | null): string {
 // exactly 0 -> "0%" with no arrow and no color. The magnitude keeps the
 // backend's one decimal, dropping a trailing ".0" ("24%", "12.5%").
 function TrendCell({ value }: { value: number }) {
-  const text = `${Number(Math.abs(value).toFixed(1))}%`;
+  const text = `${formatNumber(Math.abs(value))}%`;
   if (value > 0) return <td className="up">▲ {text}</td>;
   if (value < 0) return <td className="down">▼ {text}</td>;
   return <td>{text}</td>;

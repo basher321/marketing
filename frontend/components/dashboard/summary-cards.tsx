@@ -9,7 +9,8 @@ import { dashboardKeys, fetchAdSpendSummary, fetchRevenueSummary } from "@/lib/a
 import type { InboxStatus } from "@/lib/types/conversations";
 import { useCompanyCurrency } from "@/hooks/use-tenant";
 
-import { money, oneDecimal, trend } from "./format";
+import { money, trend } from "./format";
+import { formatNumber } from "@/lib/format/number";
 
 // Inbox statuses where the customer is still waiting for a reply to go out:
 // no reply yet (new), a draft awaiting approval (draft_ready), or handed to a
@@ -72,7 +73,7 @@ export default function SummaryCards() {
           return (
             <p className={t.className}>
               {t.arrow}
-              {oneDecimal(Math.abs(d))}% vs yesterday
+              {formatNumber(Math.abs(d))}% vs yesterday
             </p>
           );
         }}
@@ -93,7 +94,7 @@ export default function SummaryCards() {
         isPending={adSpend.isPending}
         isError={adSpend.isError}
         value={() => money(adSpend.data!.ad_spend_24h, currency)}
-        delta={() => <p className="card-delta">ROAS {adSpend.data!.avg_roas === null ? "—" : `${oneDecimal(adSpend.data!.avg_roas)}x`}</p>}
+        delta={() => <p className="card-delta">ROAS {adSpend.data!.avg_roas === null ? "—" : `${formatNumber(adSpend.data!.avg_roas)}x`}</p>}
       />
       <Card
         title="Open Conversations"

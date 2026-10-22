@@ -19,6 +19,7 @@ import {
   sendMessage,
 } from "@/lib/api/socialapi";
 import { sapiLabel, type CommentedPost, type DraftTurn, type SapiConversation } from "@/lib/types/socialapi";
+import { formatNumber } from "@/lib/format/number";
 
 // SocialAPI inbox (SPEC-FE-054 / SPEC-BE-083): DMs, comments and reviews read
 // live from SocialAPI.ai and answered through it. "Draft with AI" uses the
@@ -294,7 +295,7 @@ function Reviews() {
         </select>
         {reviews.data?.average_rating != null && (
           <span className="text-[13px]">
-            ★ {reviews.data.average_rating.toFixed(1)} · {reviews.data.total_count ?? reviews.data.items.length} reviews
+            ★ {formatNumber(reviews.data.average_rating)} · {reviews.data.total_count ?? reviews.data.items.length} reviews
           </span>
         )}
       </div>

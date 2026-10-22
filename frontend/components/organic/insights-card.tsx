@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { PlatformTag, errorText } from "@/components/organic/shared";
 import { fetchInsights, organicKeys } from "@/lib/api/organic";
+import { formatNumber } from "@/lib/format/number";
 
 const FORMAT_LABEL: Record<string, string> = { post: "single posts", reel: "reels", carousel: "carousels", video: "videos", story: "stories" };
 
@@ -38,13 +39,13 @@ export default function InsightsCard({ days = 60 }: { days?: 30 | 60 | 90 }) {
                 <div className="mb-1 flex items-center gap-1.5">
                   <PlatformTag platform={p.platform} />
                   <span className="text-muted">
-                    {p.posts_with_results} posts · {p.avg_engagement_rate.toFixed(1)}% avg
+                    {p.posts_with_results} posts · {formatNumber(p.avg_engagement_rate)}% avg
                   </span>
                 </div>
                 <div>
                   Best hours ({data.timezone}): {p.best_hours.length ? p.best_hours.map((h) => h.label).join(", ") : "—"}
                 </div>
-                <div>Best format: {p.best_format ? `${FORMAT_LABEL[p.best_format.post_format] ?? p.best_format.post_format} (${p.best_format.avg_engagement_rate.toFixed(1)}%)` : "—"}</div>
+                <div>Best format: {p.best_format ? `${FORMAT_LABEL[p.best_format.post_format] ?? p.best_format.post_format} (${formatNumber(p.best_format.avg_engagement_rate)}%)` : "—"}</div>
               </div>
             ))}
           </div>
@@ -61,7 +62,7 @@ export default function InsightsCard({ days = 60 }: { days?: 30 | 60 | 90 }) {
                       <td className="max-w-[260px] truncate text-xs" title={t.excerpt}>
                         {t.excerpt}
                       </td>
-                      <td className="whitespace-nowrap text-xs">{t.engagement_rate.toFixed(1)}%</td>
+                      <td className="whitespace-nowrap text-xs">{formatNumber(t.engagement_rate)}%</td>
                       <td className="text-xs">
                         {t.external_url && (
                           <a href={t.external_url} target="_blank" rel="noreferrer" className="text-accent underline">

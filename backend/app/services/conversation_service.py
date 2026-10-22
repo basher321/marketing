@@ -262,7 +262,7 @@ def get_cs_metrics(
     deflection_rate_pct = None
 
     # CSAT (7d) = AVG(conversations.csat_score) over the window's conversations
-    # that have a score (NULL scores ignored), rounded to 1 decimal; null when
+    # that have a score (NULL scores ignored), rounded to 2 decimals; null when
     # none are scored. The scale is not constrained in the DB (the HTML shows
     # "/5").
     avg_csat = db.execute(
@@ -272,9 +272,9 @@ def get_cs_metrics(
     ).scalar()
 
     metrics = {
-        "avg_response_seconds": round(float(avg_seconds), 1) if avg_seconds is not None else None,
+        "avg_response_seconds": round(float(avg_seconds), 2) if avg_seconds is not None else None,
         "deflection_rate_pct": deflection_rate_pct,
-        "csat_7d": round(float(avg_csat), 1) if avg_csat is not None else None,
+        "csat_7d": round(float(avg_csat), 2) if avg_csat is not None else None,
     }
     logger.info("cs_metrics_computed", tenant_id=tenant_id, **metrics)
     return metrics

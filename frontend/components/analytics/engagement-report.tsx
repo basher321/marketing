@@ -6,6 +6,7 @@ import { analyticsKeys, fetchEngagementReport } from "@/lib/api/analytics";
 import type { RangeKey } from "@/lib/types/analytics";
 
 import { BarChart, EMPTY, ReportStatus, Tile, channelLabel } from "./ads-report";
+import { formatNumber } from "@/lib/format/number";
 
 const PIPELINE = [
   { key: "draft", label: "Draft" },
@@ -105,10 +106,10 @@ export default function EngagementReport({ range }: { range: RangeKey }) {
             </div>
             <h2 className="section-title">Engagement</h2>
             <div className="grid grid-cols-4 gap-4 max-[900px]:grid-cols-2">
-              <Tile title="Likes" value={r.likes === null ? "—" : r.likes.toLocaleString("en-US")} />
-              <Tile title="Comments" value={r.comments === null ? "—" : r.comments.toLocaleString("en-US")} />
-              <Tile title="Shares" value={r.shares === null ? "—" : r.shares.toLocaleString("en-US")} />
-              <Tile title="Reach" value={r.reach === null ? "—" : r.reach.toLocaleString("en-US")} />
+              <Tile title="Likes" value={r.likes === null ? "—" : formatNumber(r.likes)} />
+              <Tile title="Comments" value={r.comments === null ? "—" : formatNumber(r.comments)} />
+              <Tile title="Shares" value={r.shares === null ? "—" : formatNumber(r.shares)} />
+              <Tile title="Reach" value={r.reach === null ? "—" : formatNumber(r.reach)} />
             </div>
             {[r.likes, r.comments, r.shares, r.reach].some((v) => v === null) && (
               <p className="mb-0 mt-2 text-xs text-muted">{r.missing_reason}</p>

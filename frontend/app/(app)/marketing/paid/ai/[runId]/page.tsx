@@ -10,6 +10,7 @@ import RunTimeline from "@/components/campaigns/ai/run-timeline";
 import { errorText } from "@/components/campaigns/platform-builder/tree";
 import { aiCampaignKeys, answerRun, cancelRun, fetchRun, publishRun, regenerateAd, retryRun } from "@/lib/api/ai-campaigns";
 import type { AICampaignRun } from "@/lib/types/ai-campaigns";
+import { formatNumber } from "@/lib/format/number";
 
 const WORKING = new Set(["queued", "running", "publishing"]);
 const STATUS_TEXT: Record<string, string> = {
@@ -102,7 +103,7 @@ export default function AIRunPage() {
       <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
         <aside className="card" style={{ padding: 12 }}>
           <RunTimeline stages={r.stages} reviewReached={reviewReached} />
-          <p className="m-0 mt-2 text-xs text-muted">AI cost so far: about {(r.cost_cents / 100).toFixed(2)} USD</p>
+          <p className="m-0 mt-2 text-xs text-muted">AI cost so far: about {formatNumber(r.cost_cents / 100)} USD</p>
         </aside>
 
         <div className="min-w-0">
@@ -137,7 +138,7 @@ export default function AIRunPage() {
                 </h2>
                 <div className="flex items-center gap-2 text-[13px]">
                   <span className="text-muted">
-                    Budget {c.budget.toFixed(2)} ({c.budget_mode})
+                    Budget {formatNumber(c.budget)} ({c.budget_mode})
                   </span>
                   {c.status && <span className="badge badge-neutral">{c.status}</span>}
                   {c.campaign_id && (

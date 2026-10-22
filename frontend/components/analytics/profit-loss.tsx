@@ -12,6 +12,7 @@ import { createExpense, deleteExpense, expenseKeys, fetchExpenses } from "@/lib/
 import { formatMoney } from "@/lib/format/money";
 import type { PLRange, ProfitLoss as PL } from "@/lib/types/analytics";
 import type { ExpenseCategory } from "@/lib/types/expenses";
+import { formatNumber } from "@/lib/format/number";
 
 const INPUT = "rounded-md border border-border bg-panel px-3 py-2 text-[13.5px] text-text";
 const RANGES: { key: PLRange; label: string }[] = [
@@ -25,7 +26,7 @@ const CATEGORY_LABEL: Record<ExpenseCategory, string> = { shipping: "Shipping (c
 
 function delta(v: number | null): string | undefined {
   if (v === null) return "No earlier period to compare";
-  return `${v > 0 ? "+" : ""}${v}% vs previous period`;
+  return `${v > 0 ? "+" : ""}${formatNumber(v)}% vs previous period`;
 }
 
 function Breakdown({ r }: { r: PL }) {
@@ -205,7 +206,7 @@ export default function ProfitLoss() {
                 <Tile
                   title={loss ? "Loss" : "Profit"}
                   value={`${loss ? "−" : ""}${m(Math.abs(r.profit))}`}
-                  sub={`${loss ? "▼ Loss" : "▲ Profit"} · margin ${r.margin === null ? "—" : `${r.margin}%`}${r.complete ? "" : " · incomplete"}`}
+                  sub={`${loss ? "▼ Loss" : "▲ Profit"} · margin ${r.margin === null ? "—" : `${formatNumber(r.margin)}%`}${r.complete ? "" : " · incomplete"}`}
                   hint={delta(r.delta_pct.profit)}
                 />
               </div>

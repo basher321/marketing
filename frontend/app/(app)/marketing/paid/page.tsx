@@ -15,6 +15,7 @@ import { fetchDrafts } from "@/lib/api/campaigns";
 import { fetchCampaigns } from "@/lib/api/marketing";
 import { formatMoney } from "@/lib/format/money";
 import type { RangeKey } from "@/lib/types/analytics";
+import { formatNumber } from "@/lib/format/number";
 
 const STATUS_CLASS: Record<string, string> = {
   running: "badge badge-success",
@@ -81,7 +82,7 @@ function AIRuns() {
                 <td>{r.platforms.join(", ")}</td>
                 <td>{RUN_STATUS[r.status] ?? r.status}</td>
                 <td>{new Date(r.created_at).toLocaleString()}</td>
-                <td>{(r.cost_cents / 100).toFixed(2)} USD</td>
+                <td>{formatNumber(r.cost_cents / 100)} USD</td>
                 <td>
                   <Link className="text-accent underline" href={`/marketing/paid/ai/${r.id}`}>
                     Open
@@ -211,7 +212,7 @@ function LiveCampaigns() {
                   <td>{c.objective === "conversions" ? "sales" : c.objective.replace(/_/g, " ")}</td>
                   <td>{money(c.budget, c.currency)}</td>
                   <td>{money(c.spent, c.currency)}</td>
-                  <td title={c.roas === null ? "No imported purchase value yet" : undefined}>{c.roas === null ? "—" : c.roas.toFixed(2)}</td>
+                  <td title={c.roas === null ? "No imported purchase value yet" : undefined}>{c.roas === null ? "—" : formatNumber(c.roas)}</td>
                   <td className="whitespace-nowrap">
                     {c.builder ? (
                       <Link className="text-accent underline" href={`/marketing/paid/${c.id}/edit`}>

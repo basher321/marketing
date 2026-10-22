@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState, type DragEvent } from "react"
 import { fetchMediaItem, mediaKeys } from "@/lib/api/media";
 import { uploadChatFile } from "@/lib/api/orchestrator";
 import type { FileRead, MessageFile } from "@/lib/types/orchestrator";
+import { formatNumber } from "@/lib/format/number";
 
 // Chat attachments (SPEC-FE-064, backend SPEC-BE-096): 📎 picker, drag-and-drop
 // and paste. Each file uploads at once (with progress), is read by the
@@ -28,8 +29,8 @@ export interface Attachment {
 
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`;
-  return `${(n / 1024 / 1024).toFixed(n < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+  if (n < 1024 * 1024) return `${formatNumber(n / 1024)} KB`;
+  return `${formatNumber(n / 1024 / 1024)} MB`;
 }
 
 const KIND_ICON: Record<string, string> = {

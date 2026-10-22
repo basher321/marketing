@@ -9,6 +9,7 @@ import { syncAllMetaResults } from "@/lib/api/meta";
 import { ApiError } from "@/lib/types/common";
 import type { AdsCampaignRow, RangeKey } from "@/lib/types/analytics";
 import { formatMoney } from "@/lib/format/money";
+import { formatNumber, formatPercent } from "@/lib/format/number";
 
 // ---- Shared by the Ads / Engagement / Customer Service tabs (SPEC-FE-035) ----
 
@@ -27,7 +28,7 @@ export function money(amount: number, currency: string): string {
 }
 
 export function pct(value: number): string {
-  return `${Number(value.toFixed(1))}%`;
+  return formatPercent(value);
 }
 
 // "Sep 3" for a backend date. The dates are tenant-local calendar days sent as
@@ -240,7 +241,7 @@ function MetaSyncLine({ source }: { source: string | null | undefined }) {
 // with the backend's reason only when Meta reported none - never an estimate.
 export default function AdsReport({ range }: { range: RangeKey }) {
   const query = useQuery({ queryKey: analyticsKeys.ads(range), queryFn: () => fetchAdsReport(range) });
-  const count = (v: number | null | undefined) => (v === null || v === undefined ? "—" : v.toLocaleString());
+  const count = (v: number | null | undefined) => (v === null || v === undefined ? "—" : formatNumber(v));
 
   return (
     <ReportStatus query={query} what="ads report">
@@ -261,7 +262,7 @@ export default function AdsReport({ range }: { range: RangeKey }) {
               <Tile title="CTR" value={t.ctr === null ? "—" : pct(t.ctr)} hint={t.ctr === null ? t.missing_reason : undefined} />
               <Tile
                 title="ROAS"
-                value={t.roas === null ? "—" : `${t.roas.toFixed(2)}x`}
+                value={t.roas === null ? "—" : `${formatNumber(t.roas)}x`}
                 hint={t.roas === null ? t.missing_reason : undefined}
               />
             </div>

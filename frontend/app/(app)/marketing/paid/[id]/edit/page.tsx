@@ -30,6 +30,7 @@ import {
   validateCampaign,
 } from "@/lib/api/meta";
 import type { Issue } from "@/lib/types/meta";
+import { formatNumber } from "@/lib/format/number";
 
 const STATUS_CLASS: Record<string, string> = {
   running: "badge badge-success",
@@ -304,12 +305,12 @@ function Results({ campaignId, currency }: { campaignId: string; currency: strin
           </p>
           <div className="mb-4 grid gap-3 sm:grid-cols-4 lg:grid-cols-7">
             <Tile title="Spend" value={fmt(r.totals.spend, (n) => money(n, currency))} />
-            <Tile title="Impressions" value={fmt(r.totals.impressions, (n) => n.toLocaleString())} />
-            <Tile title="Reach" value={fmt(r.totals.reach, (n) => n.toLocaleString())} />
-            <Tile title="Link clicks" value={fmt(r.totals.clicks, (n) => n.toLocaleString())} />
+            <Tile title="Impressions" value={fmt(r.totals.impressions, formatNumber)} />
+            <Tile title="Reach" value={fmt(r.totals.reach, formatNumber)} />
+            <Tile title="Link clicks" value={fmt(r.totals.clicks, formatNumber)} />
             <Tile title="CTR" value={fmt(r.totals.ctr, (n) => `${n}%`)} />
-            <Tile title={`Results (${r.result_metric.replace(/_/g, " ")})`} value={fmt(r.totals.results, (n) => n.toLocaleString())} />
-            <Tile title="ROAS" value={fmt(r.totals.roas, (n) => n.toFixed(2))} />
+            <Tile title={`Results (${r.result_metric.replace(/_/g, " ")})`} value={fmt(r.totals.results, formatNumber)} />
+            <Tile title="ROAS" value={fmt(r.totals.roas, formatNumber)} />
           </div>
           {r.daily.length > 0 && (
             <BarChart
@@ -338,7 +339,7 @@ function Results({ campaignId, currency }: { campaignId: string; currency: strin
                     <td>{a.name}</td>
                     <td>{effectiveLabel(a.status, a.effective_status)}</td>
                     <td>{fmt(a.spend, (n) => money(n, currency))}</td>
-                    <td>{fmt(a.impressions, (n) => n.toLocaleString())}</td>
+                    <td>{fmt(a.impressions, formatNumber)}</td>
                     <td>{fmt(a.ctr, (n) => `${n}%`)}</td>
                     <td>{fmt(a.results)}</td>
                   </tr>

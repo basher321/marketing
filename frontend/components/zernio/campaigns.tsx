@@ -9,6 +9,7 @@ import { deleteCampaign, fetchAnalytics, fetchCampaigns, setStatus, updateCampai
 import { ApiError } from "@/lib/types/common";
 import { formatMoney } from "@/lib/format/money";
 import type { ZCampaignNode, ZMetrics, ZRange } from "@/lib/types/zernio";
+import { formatNumber } from "@/lib/format/number";
 
 // Paid Marketing › Zernio tab (SPEC-FE-055): this company's Zernio campaigns,
 // read live (campaign → ad sets → ads) with Zernio's own numbers. A number
@@ -37,9 +38,9 @@ const BADGE: Record<string, string> = {
 const TREE_LABEL: Record<string, string> = { google: "Google Ads", twitter: "X", facebook: "Facebook", instagram: "Instagram", tiktok: "TikTok", linkedin: "LinkedIn", pinterest: "Pinterest", openai: "ChatGPT" };
 
 const dash = "—";
-const num = (v: number | null | undefined) => (v === null || v === undefined ? dash : v.toLocaleString());
-const pct = (v: number | null | undefined) => (v === null || v === undefined ? dash : `${v.toFixed(2)}%`);
-const roas = (v: number | null | undefined) => (v === null || v === undefined ? dash : `${v.toFixed(2)}×`);
+const num = (v: number | null | undefined) => (v === null || v === undefined ? dash : formatNumber(v));
+const pct = (v: number | null | undefined) => (v === null || v === undefined ? dash : `${formatNumber(v)}%`);
+const roas = (v: number | null | undefined) => (v === null || v === undefined ? dash : `${formatNumber(v)}×`);
 const money = (v: number | null | undefined, c: string | null) => (v === null || v === undefined ? dash : formatMoney(v, c));
 
 function StatusPill({ status }: { status: string | null }) {

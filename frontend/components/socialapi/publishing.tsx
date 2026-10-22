@@ -25,6 +25,7 @@ import {
   testKey,
 } from "@/lib/api/socialapi";
 import { sapiLabel, type KeyStatus, type PostMode, type SapiAccount, type SapiPost } from "@/lib/types/socialapi";
+import { formatNumber } from "@/lib/format/number";
 
 // SocialAPI.ai publishing (SPEC-FE-054 / SPEC-BE-083): the company's key, the
 // accounts connected through SocialAPI, a composer and the posts list. Posts
@@ -482,7 +483,7 @@ export function AnalyticsCard() {
             return (
               <div key={s.metric} className="rounded-md border border-border p-3">
                 <div className="text-xs text-muted">{s.metric.replace(/_/g, " ")}</div>
-                <div className="text-[20px] font-bold">{shown == null ? "—" : shown.toLocaleString()}</div>
+                <div className="text-[20px] font-bold">{shown == null ? "—" : formatNumber(shown)}</div>
                 <div className="text-[11px] text-muted">{s.kind === "gauge" ? "latest" : `total, ${stats.data.start} → ${stats.data.end}`}</div>
               </div>
             );

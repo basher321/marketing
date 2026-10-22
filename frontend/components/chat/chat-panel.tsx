@@ -25,6 +25,7 @@ import {
   useVoiceRecorder,
   useVoiceRepliesSetting,
 } from "./voice";
+import { formatNumber } from "@/lib/format/number";
 
 export { orchestratorKeys };
 
@@ -62,7 +63,7 @@ function cellText(row: Record<string, unknown>, col: string): string {
   if (typeof v === "boolean") return v ? "Yes" : "No";
   if (typeof v === "number") {
     if (/price|amount|spend|revenue|total|cost|budget/.test(col) && typeof row.currency === "string") return formatMoney(v, row.currency);
-    return v.toLocaleString("en-US", { maximumFractionDigits: 2 });
+    return formatNumber(v);
   }
   if (Array.isArray(v)) return v.map((x) => (typeof x === "object" ? JSON.stringify(x) : String(x))).join(", ");
   if (typeof v === "object") return JSON.stringify(v);

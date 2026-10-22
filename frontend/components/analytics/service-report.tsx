@@ -6,13 +6,14 @@ import { analyticsKeys, fetchServiceReport } from "@/lib/api/analytics";
 import type { RangeKey } from "@/lib/types/analytics";
 
 import { BarChart, EMPTY, ReportStatus, Tile, channelLabel, pct } from "./ads-report";
+import { formatNumber } from "@/lib/format/number";
 
 function minutes(value: number): string {
-  return value < 60 ? `${Number(value.toFixed(1))} min` : `${Number((value / 60).toFixed(1))} h`;
+  return value < 60 ? `${formatNumber(value)} min` : `${formatNumber(value / 60)} h`;
 }
 
 function hours(value: number): string {
-  return value < 48 ? `${Number(value.toFixed(1))} h` : `${Number((value / 24).toFixed(1))} d`;
+  return value < 48 ? `${formatNumber(value)} h` : `${formatNumber(value / 24)} d`;
 }
 
 // Analytics › Customer Service (SPEC-FE-035, backend SPEC-BE-050), for
@@ -52,7 +53,7 @@ export default function ServiceReport({ range }: { range: RangeKey }) {
               />
               <Tile
                 title="CSAT"
-                value={r.csat_avg === null ? "—" : r.csat_avg.toFixed(2)}
+                value={r.csat_avg === null ? "—" : formatNumber(r.csat_avg)}
                 sub={`${r.csat_responses} ${r.csat_responses === 1 ? "response" : "responses"}`}
                 hint={r.csat_avg === null ? "No customer ratings in this period" : undefined}
               />

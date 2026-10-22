@@ -9,12 +9,13 @@ import { errorText } from "@/components/campaigns/platform-builder/tree";
 import { aiCampaignKeys, fetchReadiness, startRun } from "@/lib/api/ai-campaigns";
 import type { PlatformKey } from "@/lib/types/ads";
 import type { AICampaignCreate, Readiness } from "@/lib/types/ai-campaigns";
+import { formatNumber } from "@/lib/format/number";
 
 const COUNTRY: Record<string, string> = { BD: "Bangladesh", IN: "India", PK: "Pakistan", US: "the United States", GB: "the United Kingdom", AE: "the UAE" };
 const YOUTUBE_LINK = /^(https:\/\/(www\.)?(youtube\.com\/(watch\?v=|shorts\/)|youtu\.be\/)[A-Za-z0-9_-]{11}|[A-Za-z0-9_-]{11})/;
 
 function money(n: number, currency: string): string {
-  return `${n.toLocaleString("en-US", { maximumFractionDigits: 2 })} ${currency}`;
+  return `${formatNumber(n)} ${currency}`;
 }
 
 /** Example prompts from the company's own active products and real prices:
@@ -26,7 +27,7 @@ function examples(r: Readiness): string[] {
     .slice(0, 3)
     .map((p) =>
       p.discount_pct > 0
-        ? `Promote our ${p.title}, now ${money(p.price, p.currency)} (${p.discount_pct}% off ${money(p.compare_at ?? p.price, p.currency)}), to shoppers${where}.`
+        ? `Promote our ${p.title}, now ${money(p.price, p.currency)} (${formatNumber(p.discount_pct)}% off ${money(p.compare_at ?? p.price, p.currency)}), to shoppers${where}.`
         : `Promote our ${p.title} at ${money(p.price, p.currency)} to shoppers${where} who would value it.`,
     );
 }
@@ -254,7 +255,7 @@ export default function NewAICampaignPage() {
                 <input type="checkbox" disabled={!p.selectable} checked={skus.includes(p.sku)}
                   onChange={(e) => setSkus((cur) => (e.target.checked ? [...cur, p.sku].slice(0, 10) : cur.filter((s) => s !== p.sku)))} />
                 {p.title} · {money(p.price, p.currency)}
-                {p.discount_pct > 0 && <span className="text-xs text-success">({p.discount_pct}% off)</span>}
+                {p.discount_pct > 0 && <span className="text-xs text-success">({formatNumber(p.discount_pct)}% off)</span>}
                 {!p.has_photo && <span className="text-xs text-muted">· no photo</span>}
                 {p.reason && <span className="text-xs text-warn">· {p.reason}</span>}
               </label>

@@ -36,6 +36,7 @@ import {
   type ZSearchHit,
   type ZTargeting,
 } from "@/lib/types/zernio";
+import { formatNumber } from "@/lib/format/number";
 
 // Zernio "New campaign" wizard (SPEC-FE-055). Every option (goals, buttons,
 // targeting fields, text limits, media kinds) comes from GET /zernio/platforms,
@@ -1079,7 +1080,7 @@ function PinEditor({ value, onChange }: { value: ZTargeting["custom_locations"];
           Add pin
         </button>
       </div>
-      <Chips items={value} label={(p) => `${p.latitude.toFixed(3)}, ${p.longitude.toFixed(3)} +${p.radius} km`} onRemove={(i) => onChange(value.filter((_, j) => j !== i))} />
+      <Chips items={value} label={(p) => `${formatNumber(p.latitude)}, ${formatNumber(p.longitude)} +${formatNumber(p.radius)} km`} onRemove={(i) => onChange(value.filter((_, j) => j !== i))} />
     </details>
   );
 }

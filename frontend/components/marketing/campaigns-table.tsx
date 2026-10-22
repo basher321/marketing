@@ -9,6 +9,7 @@ import { fetchCampaigns, marketingKeys, marketingListKeys, setCampaignRunning } 
 import { isRoleDenied } from "@/lib/types/common";
 import type { CampaignListItem } from "@/lib/types/marketing";
 import { formatMoney } from "@/lib/format/money";
+import { formatNumber } from "@/lib/format/number";
 
 const COLUMN_COUNT = 7;
 const ALL_CHANNELS = ["facebook", "instagram", "tiktok", "whatsapp", "messenger", "email", "sms", "web"];
@@ -101,7 +102,7 @@ export default function CampaignsTable() {
                     <td className="capitalize">{c.objective.replace("_", " ")}</td>
                     <td>{channels(c.channels)}</td>
                     <td>{budget(c)}</td>
-                    <td>{c.roas === null ? "—" : <b>{c.roas.toFixed(1)}x</b>}</td>
+                    <td>{c.roas === null ? "—" : <b>{formatNumber(c.roas)}x</b>}</td>
                     <td>
                       <span className={badge.className}>{badge.label}</span>
                     </td>

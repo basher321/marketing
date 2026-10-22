@@ -9,6 +9,7 @@ import { fetchAds, fetchAdSets, paidKeys, setPaidStatus } from "@/lib/api/paid";
 import { formatMoney } from "@/lib/format/money";
 import type { RangeKey } from "@/lib/types/analytics";
 import { PAID_PLATFORM_LABEL, type PaidListQuery, type PaidPlatform, type PaidResults } from "@/lib/types/paid";
+import { formatNumber } from "@/lib/format/number";
 
 const PAGE_SIZE = 50;
 const STATUSES = ["draft", "scheduled", "running", "paused", "completed", "failed"];
@@ -54,7 +55,7 @@ function ResultCells({ r, currency }: { r: PaidResults; currency: string }) {
   return (
     <>
       <td title={title}>{r.spend === null ? "—" : formatMoney(r.spend, currency)}</td>
-      <td title={title}>{r.ctr === null ? "—" : `${r.ctr.toFixed(2)}%`}</td>
+      <td title={title}>{r.ctr === null ? "—" : `${formatNumber(r.ctr)}%`}</td>
     </>
   );
 }

@@ -45,7 +45,7 @@ def _major_units(cents: int | Decimal | None) -> float:
 
 
 def _rate_pct(part: int, whole: int) -> float:
-    return round(part / whole * 100, 1) if whole else 0.0
+    return round(part / whole * 100, 2) if whole else 0.0
 
 
 def get_sales_summary(db: Session, tenant_id: str) -> dict[str, Any]:
@@ -112,7 +112,7 @@ def get_sales_summary(db: Session, tenant_id: str) -> dict[str, Any]:
         "orders_7d": orders_7d,
         "aov_7d": round(revenue_7d / orders_7d, 2) if orders_7d else 0.0,
         "refund_rate_7d_pct": refund_rate,
-        "refund_rate_7d_delta_pp": round(refund_rate - refund_rate_prev, 1),
+        "refund_rate_7d_delta_pp": round(refund_rate - refund_rate_prev, 2),
         "revenue_by_day": [
             {"date": d, "revenue": _major_units(by_day.get(d, 0))}
             for d in (first_day + timedelta(days=i) for i in range(7))
@@ -183,7 +183,7 @@ def get_top_products(db: Session, tenant_id: str) -> list[dict[str, Any]]:
             "units_sold": int(units),
             "revenue": _major_units(cur),
             # Trend = order_service.pct_delta (same rule as SPEC-BE-006/015):
-            # (current - previous) / previous * 100, 1 decimal. A product with
+            # (current - previous) / previous * 100, 2 decimals. A product with
             # revenue this week but none in the previous 7 days gets 100.0;
             # 0 in both windows gets 0.0 - never a division-by-zero error.
             "trend_pct": order_service.pct_delta(_major_units(cur), _major_units(prev)),
@@ -431,7 +431,7 @@ def get_ads_report(db: Session, tenant_id: str, range_key: str) -> dict[str, Any
         if c.starts_at and c.ends_at and c.budget_cents and c.ends_at > c.starts_at:
             share = min(1.0, max(0.0, (now - c.starts_at) / (c.ends_at - c.starts_at)))
             if share > 0:
-                pacing = round(float(c.total_cents) / (c.budget_cents * share) * 100, 1)
+                pacing = round(float(c.total_cents) / (c.budget_cents * share) * 100, 2)
         rows.append(
             {
                 "id": str(c.id),
@@ -489,7 +489,7 @@ def get_ads_report(db: Session, tenant_id: str, range_key: str) -> dict[str, Any
             "active_campaigns": sum(1 for r in rows if r["status"] == "running"),
             "budget_total": budget_total,
             # Lifetime spend of the listed campaigns / their total budget.
-            "budget_used_pct": round(lifetime / budget_total * 100, 1) if budget_total else None,
+            "budget_used_pct": round(lifetime / budget_total * 100, 2) if budget_total else None,
             "impressions": int(meta_tot["impressions"]) if "impressions" in meta_tot else None,
             "clicks": int(meta_tot["link_clicks"]) if "link_clicks" in meta_tot else None,
             "ctr": _ratio(meta_tot.get("link_clicks"), meta_tot.get("impressions"), 100),
@@ -690,16 +690,16 @@ def get_service_report(db: Session, tenant_id: str, range_key: str) -> dict[str,
         },
         "by_channel": by_channel,
         "by_day": _series(start, today, by_day, ("new", "resolved")),
-        "first_response_minutes_avg": _half_up(first_resp, 1) if first_resp is not None else None,
-        "resolution_hours_avg": _half_up(c.resolution_h, 1) if c.resolution_h is not None else None,
+        "first_response_minutes_avg": _half_up(first_resp, 2) if first_resp is not None else None,
+        "resolution_hours_avg": _half_up(c.resolution_h, 2) if c.resolution_h is not None else None,
         "csat_avg": _half_up(c.csat_avg, 2) if c.csat_avg is not None else None,
         "csat_responses": int(c.csat_n),
         "replies": {
             "ai": ai,
             "agent": agent,
-            "ai_share_pct": _half_up(Decimal(ai) / (ai + agent) * 100, 1) if ai + agent else None,
+            "ai_share_pct": _half_up(Decimal(ai) / (ai + agent) * 100, 2) if ai + agent else None,
         },
-        "deflection_pct": _half_up(Decimal(int(deflected)) / resolved * 100, 1) if resolved else None,
+        "deflection_pct": _half_up(Decimal(int(deflected)) / resolved * 100, 2) if resolved else None,
     }
 
 
@@ -1013,7 +1013,7 @@ def _pct(cur: int, prev: int) -> float | None:
     # Change vs the previous period; null when the previous period had nothing to compare with.
     if prev == 0:
         return None
-    return round((cur - prev) / abs(prev) * 100, 1)
+    return round((cur - prev) / abs(prev) * 100, 2)
 
 
 def get_profit_loss(db: Session, tenant_id: str, range_key: str | None = None,
@@ -1087,7 +1087,7 @@ def get_profit_loss(db: Session, tenant_id: str, range_key: str | None = None,
             "other": m(exp.get("other", 0)), "total": m(cur["costs_cents"]),
         },
         "profit": m(cur["profit_cents"]),
-        "margin": round(cur["profit_cents"] / net * 100, 1) if net else None,
+        "margin": round(cur["profit_cents"] / net * 100, 2) if net else None,
         "complete": not missing and not unavailable,
         "missing_cost": {"lines": len(missing), "revenue": m(sum(int(r.line_total_cents) for r in missing))},
         "previous": {"net_revenue": m(prev["net_cents"]), "costs_total": m(prev["costs_cents"]),

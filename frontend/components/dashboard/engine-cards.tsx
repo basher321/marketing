@@ -13,8 +13,8 @@ import {
 } from "@/lib/api/dashboard";
 import { fetchCampaignMetrics, fetchScheduledPostCount, marketingKeys } from "@/lib/api/marketing";
 import { fetchWorkflows, workflowKeys } from "@/lib/api/workflows";
+import { formatNumber } from "@/lib/format/number";
 
-import { oneDecimal } from "./format";
 
 // One metric row with its own loading ("—") / error state, so one failed
 // query never blanks its siblings (SPEC-FE-006 rule 9).
@@ -92,14 +92,14 @@ export default function EngineCards() {
         <Metric label="Active campaigns" query={campaigns} render={(d) => String(d.active_campaigns)} />
         <Metric label="Scheduled posts" query={posts} render={(d) => String(d.pending)} />
         {/* Same cached value as the Ad Spend card's ROAS line. */}
-        <Metric label="Avg. ROAS" query={adSpend} render={(d) => (d.avg_roas === null ? "—" : `${oneDecimal(d.avg_roas)}x`)} />
+        <Metric label="Avg. ROAS" query={adSpend} render={(d) => (d.avg_roas === null ? "—" : `${formatNumber(d.avg_roas)}x`)} />
         <Metric label="Pending approvals" query={pending} render={(d) => String(d.marketing)} />
       </EngineCard>
       <EngineCard name="Customer Service">
         <Metric label="Open threads" query={inbox} render={(d) => String(d.count)} />
         <Metric label="Avg. response" query={cs} render={(d) => duration(d.avg_response_seconds)} />
-        <Metric label="Deflection rate" query={cs} render={(d) => (d.deflection_rate_pct === null ? "—" : `${oneDecimal(d.deflection_rate_pct)}%`)} />
-        <Metric label="CSAT (7d)" query={cs} render={(d) => (d.csat_7d === null ? "—" : `${oneDecimal(d.csat_7d)}/5`)} />
+        <Metric label="Deflection rate" query={cs} render={(d) => (d.deflection_rate_pct === null ? "—" : `${formatNumber(d.deflection_rate_pct)}%`)} />
+        <Metric label="CSAT (7d)" query={cs} render={(d) => (d.csat_7d === null ? "—" : `${formatNumber(d.csat_7d)}/5`)} />
       </EngineCard>
     </div>
   );

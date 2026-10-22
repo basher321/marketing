@@ -14,6 +14,7 @@ from app.middleware.request_id_middleware import RequestIdMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.middleware.tenant_middleware import TenantMiddleware
 from app.services import scheduler_service
+from app.utils.json_response import RoundedJSONResponse
 
 # Not part of the SPEC-BE-002/003 config surface yet — hardcoded here rather
 # than added to Settings without a spec update.
@@ -31,6 +32,7 @@ app = FastAPI(
     docs_url=None if _PROD else "/docs",
     redoc_url=None if _PROD else "/redoc",
     openapi_url=None if _PROD else "/openapi.json",
+    default_response_class=RoundedJSONResponse,
 )
 
 app.add_middleware(

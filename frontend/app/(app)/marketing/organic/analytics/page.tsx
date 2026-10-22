@@ -7,8 +7,9 @@ import { BarChart, Tile } from "@/components/analytics/ads-report";
 import InsightsCard from "@/components/organic/insights-card";
 import { Empty, OrganicHeader, PlatformTag, errorText } from "@/components/organic/shared";
 import { fetchOrganicReport, importOrganicResults, organicKeys } from "@/lib/api/organic";
+import { formatNumber } from "@/lib/format/number";
 
-const fmt = (v: number | null | undefined) => (v === null || v === undefined ? "—" : v.toLocaleString());
+const fmt = (v: number | null | undefined) => (v === null || v === undefined ? "—" : formatNumber(v));
 
 // Organic Analytics (SPEC-FE-050 / SPEC-BE-078): imported post results only.
 // A metric a platform didn't give shows "—", never an estimate.
@@ -111,7 +112,7 @@ export default function OrganicAnalyticsPage() {
                             t.excerpt
                           )}
                         </td>
-                        <td className="text-xs">{t.engagements.toLocaleString()} eng.</td>
+                        <td className="text-xs">{formatNumber(t.engagements)} eng.</td>
                       </tr>
                     ))}
                   </tbody>

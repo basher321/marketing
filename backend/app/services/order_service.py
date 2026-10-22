@@ -28,13 +28,13 @@ logger = structlog.get_logger(__name__)
 
 
 def pct_delta(current: float, previous: float) -> float:
-    # Percentage change of `current` vs `previous`, rounded to 1 decimal:
+    # Percentage change of `current` vs `previous`, rounded to 2 decimals:
     # (current - previous) / previous * 100. Both 0 -> 0.0. previous 0 with
     # current > 0 -> 100.0 (growth from nothing is reported as +100%, never a
     # division-by-zero error). Reused by SPEC-BE-015's revenue delta.
     if previous == 0:
         return 100.0 if current > 0 else 0.0
-    return round((current - previous) / previous * 100, 1)
+    return round((current - previous) / previous * 100, 2)
 
 
 def get_order_metrics(db: Session, tenant_id: str, now: datetime | None = None) -> dict[str, int | float]:

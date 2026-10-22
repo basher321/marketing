@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { analyticsKeys, fetchOrderMetrics, fetchSalesSummary } from "@/lib/api/analytics";
 import { useCompanyCurrency } from "@/hooks/use-tenant";
 import { formatMoney } from "@/lib/format/money";
+import { formatNumber } from "@/lib/format/number";
 
 // Money is shown as whole units with thousands separators, like the mockup's
 // "312,480". The analytics response carries no currency, so the company
@@ -13,15 +14,11 @@ function money(value: number, currency: string | null): string {
   return formatMoney(value, currency, { whole: true });
 }
 
-function oneDecimal(value: number): string {
-  return String(Number(value.toFixed(1)));
-}
-
 // Delta arrow/color follow the sign of the real comparison value (SPEC-FE-019
 // rule 2): > 0 -> ".up ▲", < 0 -> ".down ▼", 0 -> no arrow and no color.
 // The magnitude is shown without its sign, as the mockup does ("▼ 0.3%").
 function Delta({ value, suffix }: { value: number; suffix: string }) {
-  const text = `${oneDecimal(Math.abs(value))}${suffix}`;
+  const text = `${formatNumber(Math.abs(value))}${suffix}`;
   if (value > 0) return <p className="card-delta up">▲ {text}</p>;
   if (value < 0) return <p className="card-delta down">▼ {text}</p>;
   return <p className="card-delta text-muted">{text}</p>;
@@ -94,7 +91,7 @@ export default function SalesSummaryCards() {
       <Card
         title="Refund Rate"
         state={sales}
-        value={() => `${oneDecimal(sales.data!.refund_rate_7d_pct)}%`}
+        value={() => `${formatNumber(sales.data!.refund_rate_7d_pct)}%`}
         delta={() => ({ value: sales.data!.refund_rate_7d_delta_pp, suffix: "%" })}
       />
     </div>
