@@ -43,7 +43,7 @@ export default function BusinessCards() {
   const money = (v: number) => (r ? formatMoney(v, r.currency) : "—");
   return (
     <>
-      <div className="grid-3 mb-4">
+      <div className="grid-3">
         <Card href="/marketing/organic/accounts" title="Connected accounts"
           value={accounts.isSuccess ? String(connected) : "—"}
           sub={attention ? `${attention} need attention` : accounts.isError ? "Couldn't load" : "Social accounts"} tone={attention ? "danger" : undefined} />

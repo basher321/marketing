@@ -758,6 +758,11 @@ tr:hover td { background: color-mix(in srgb, var(--accent) 5%, var(--panel)); }
 [data-density="compact"] .page-subtitle { margin-bottom: 16px; }
 [data-density="compact"] .section-title { margin: 22px 0 10px; }
 [data-density="compact"] :is(.grid-2, .grid-3, .grid-4, .qa) { gap: 10px; }
+/* Dashboard stat cards (SPEC-FE-079): one gap for the space between the two card grids, between rows and
+   between cards in a row. */
+.dash-stats { --dash-gap: 16px; display: grid; gap: var(--dash-gap); }
+.dash-stats > :is(.grid-3, .grid-4) { gap: var(--dash-gap); }
+[data-density="compact"] .dash-stats { --dash-gap: 10px; }
 [data-motion="off"] *, [data-motion="off"] *::before, [data-motion="off"] *::after { animation-duration: .01ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; transition-delay: 0s !important; scroll-behavior: auto !important; }
 @media (prefers-reduced-motion: reduce) {
   .page-in, .bar, .wf-arrow, .sb-orb, .more-card, .pal-box, .sheet-panel, .tb-title.swap { animation: none !important; }
@@ -812,6 +817,7 @@ tr:hover td { background: color-mix(in srgb, var(--accent) 5%, var(--panel)); }
 @media (max-width: 480px) {
   .grid-3 { grid-template-columns: 1fr; }
   .grid-4 { gap: 10px; }
+  .dash-stats { --dash-gap: 10px; }
   .grid-4 > .card { padding: 14px; }
   .card-value { font-size: 22px; }
   .card-title { font-size: 12px; }

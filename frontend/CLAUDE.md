@@ -261,3 +261,6 @@ spec justifies it.
     (the production CSP allows connect.facebook.net / *.facebook.com for it).
   - **Nav** items may carry `minRole` (`forRole()` in `components/shell/nav.ts`, role from `GET /users/me`).
   - **App branding** (`components/branding/app-branding.tsx`): sidebar, sign-in shell, title and favicon.
+- Dashboard stat-card spacing (SPEC-FE-079, 2026-10-22): `SummaryCards` and `BusinessCards` sit in one `.dash-stats`
+  grid whose `--dash-gap` (16 px; 10 px compact or ≤ 480 px) is also the gap of both card grids, so row and column
+  gaps match. Don't add margins to individual dashboard cards or grids.
